@@ -67,6 +67,13 @@ On Ubuntu, you may also need to install the package `libncurses5-dev`.
 
 If OpenBLAS fails to build in `getarch_2nd.c`, you need to specify the architecture of your processor in Make.inc.
 
+On OS X, you may need to install gfortran. Either download and install
+[gfortran.dmg](http://cran.r-project.org/bin/macosx/tools/gfortran-4.2.3.dmg),
+or install homebrew and run
+
+    brew install gfortran
+    ln -s /usr/local/bin/gfortran-4.2 /usr/local/bin/gfortran
+
 <a name="Required-Build-Tools-External-Libraries"/>
 ## Required Build Tools & External Libraries
 
@@ -124,6 +131,7 @@ When installing from source, these libraries are automatically downloaded and co
 Because of the rapid pace of development at this point, we recommend installing the latest Julia from source, but platform-specific tarballs with containing pre-compiled binaries are also available for download:
 
 - **GNU/Linux x86:** <https://github.com/downloads/JuliaLang/julia/julia-77bdd202ec-Linux-i686.tar.gz>
+- **GNU/Linux x86/64:** <https://github.com/downloads/JuliaLang/julia/julia-1fdd1e4e56-Linux-x86_64.tar.gz>
 - **Darwin/OS X x86/64:** <https://github.com/downloads/JuliaLang/julia/julia-c4865bd18d-Darwin-i386.tar.gz>
 
 Download the appropriate tarball and untar it somewhere;

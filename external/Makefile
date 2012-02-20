@@ -5,7 +5,7 @@ READLINE_VER = 6.2
 PCRE_VER = 8.21
 GRISU_VER = 1.1
 DSFMT_VER = 2.1
-OPENBLAS_VER = v0.1alpha2.4
+OPENBLAS_VER = v0.1alpha2.5
 LAPACK_VER = 3.4.0
 ARPACK_VER = 3.0.2
 FFTW_VER = 3.3
@@ -21,12 +21,18 @@ include $(JULIAHOME)/Make.inc
 
 OS = $(shell uname)
 ARCH = $(shell uname -m)
-LIBS = llvm pcre fdlibm dsfmt openblas lapack arpack fftw suitesparse suitesparse-wrapper double-conversion amos
+LIBS = pcre fdlibm dsfmt openblas lapack arpack fftw suitesparse suitesparse-wrapper double-conversion amos
+
 ifeq ($(OS), Linux)
 LIBS += unwind
 endif
+
 ifeq ($(USE_SYSTEM_READLINE), 0)
 LIBS += readline
+endif
+
+ifeq ($(USE_SYSTEM_LLVM), 0)
+LIBS += llvm
 endif
 
 ifeq ($(USE_DEBIAN), 1)
@@ -389,7 +395,7 @@ $(SUITESPARSE_OBJ_SOURCE): SuiteSparse-$(SUITESPARSE_VER)/Makefile
 	cp `find UMFPACK CHOLMOD SPQR *AMD BTF UFconfig -name *.a` lib && \
 	cd lib && \
 	for i in *.a; do ar x $$i; done && \
-	gfortran -shared $(FFLAGS) *.o ../../lapack-$(LAPACK_VER)/liblapack.a ../../$(OPENBLAS_OBJ_SOURCE) -o libsuitesparse.$(SHLIB_EXT)
+	gfortran -shared $(FFLAGS) *.o ../../lapack-$(LAPACK_VER)/liblapack.a ../../$(OPENBLAS_OBJ_SOURCE) -lstdc++ -o libsuitesparse.$(SHLIB_EXT)
 $(SUITESPARSE_OBJ_TARGET): $(SUITESPARSE_OBJ_SOURCE)
 	cp -f $< $@
 
