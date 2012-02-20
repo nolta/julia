@@ -4,9 +4,9 @@
        _       _ _(_)_     |
       (_)     | (_) (_)    |   A fresh approach to technical computing
        _ _   _| |_  __ _   |
-      | | | | | | |/ _` |  |           http://julialang.org
+      | | | | | | |/ _` |  |          http://julialang.org
       | | |_| | | | (_| |  |       julia-dev@googlegroups.com
-     _/ |\__'_|_|_|\__'_|  |
+     _/ |\__'_|_|_|\__'_|  |           #julia on freenode
     |__/                   |
 
 
@@ -20,16 +20,17 @@ This is the GitHub repository of Julia source code, including instructions for c
 <a name="Resources"/>
 
 - **Homepage:** <http://julialang.org>
-- **Discussion:** <http://groups.google.com/group/julia-dev/>
+- **Mailing list:** <http://groups.google.com/group/julia-dev/>
+- **IRC:** <http://webchat.freenode.net/?channels=julia>
 - **Source code:** <https://github.com/JuliaLang/julia>
 - **Git clone URL:** <git://github.com/JuliaLang/julia.git>
-- **Documentation:** <https://github.com/JuliaLang/julia/wiki>
+- **Documentation:** <http://julialang.org/manual/>
 
-<a name="Supported-Platforms"/>
-## Supported Platforms
+<a name="Currently-Supported-Platforms"/>
+## Currently Supported Platforms
 
 - **GNU/Linux:** x86/64 (64-bit); x86 (32-bit).
-- **Darwin/OS X:** x86/64 (64-bit)
+- **Darwin/OS X:** x86/64 (64-bit); x86 (32-bit).
 
 <a name="Source-Download-Compilation"/>
 ## Source Download & Compilation
@@ -67,9 +68,7 @@ On Ubuntu, you may also need to install the package `libncurses5-dev`.
 
 If OpenBLAS fails to build in `getarch_2nd.c`, you need to specify the architecture of your processor in Make.inc.
 
-On OS X, you may need to install gfortran. Either download and install
-[gfortran.dmg](http://cran.r-project.org/bin/macosx/tools/gfortran-4.2.3.dmg),
-or install homebrew and run
+On OS X, you may need to install gfortran. Either download and install [gfortran from hpc.sf.net](http://hpc.sf.net/), or [64-bit gfortran from gcc.gnu.org](http://gcc.gnu.org/wiki/GFortranBinaries), or install homebrew and run
 
     brew install gfortran
     ln -s /usr/local/bin/gfortran-4.2 /usr/local/bin/gfortran
@@ -78,23 +77,29 @@ or install homebrew and run
 ## Required Build Tools & External Libraries
 
 Julia depends on a number of mature, state-of-the art C and Fortran libraries.
-When installing from source, these libraries are automatically downloaded and compiled.
 
 - **[GNU make]**                — building dependencies.
 - **[gcc, g++, gfortran][gcc]** — compiling and linking C, C++ and Fortran code.
 - **[Perl]**                    — preprocessing of header files of libraries.
 - **[wget]**                    — to automatically download external libraries:
-    - **[LLVM]**                — compiler infrastructure.
-    - **[fdlibm]**              — a portable implementation of much of the system-dependent libm math library's functionality.
-    - **[MT]**                  — a fast Mersenne Twister pseudorandom number generator library.
-    - **[OpenBLAS]**            — a fast, open, and maintained [basic linear algebra subprograms (BLAS)](http://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms) library, based on [Kazushige Goto's](http://en.wikipedia.org/wiki/Kazushige_Goto) famous [GotoBLAS](http://www.tacc.utexas.edu/tacc-projects/gotoblas2/).
-    - **[LAPACK]**              — a library of linear algebra routines for solving systems of simultaneous linear equations, least-squares solutions of linear systems of equations, eigenvalue problems, and singular value problems.
-    - **[SuiteSparse]**         — a library of linear algebra routines for sparse matrices
-    - **[ARPACK]**              — a collection of subroutines designed to solve large, sparse eigenvalue problems.
-    - **[FFTW]**                — library for computing fast Fourier transforms very quickly and efficiently.
-    - **[PCRE]**                — Perl-compatible regular expressions library.
-    - **[GNU readline]**        — library allowing shell-like line editing in the terminal, with history and familiar key bindings.
-    - **[D3]**                  — JavaScript visualization library.
+
+Julia uses the following external libraries. When installing from
+source, some of these are included in the source, and others are
+automatically downloaded and compiled.
+
+- **[LLVM]**                — compiler infrastructure. Currently, julia requires LLVM 3.0.
+- **[FemtoLisp]**	    - Packaged with julia source, and used to implement the compiler.
+- **[GNU readline]**        — library allowing shell-like line editing in the terminal, with history and familiar key bindings.
+- **[fdlibm]**              — a portable implementation of much of the system-dependent libm math library's functionality.
+- **[MT]**                  — a fast Mersenne Twister pseudorandom number generator library.
+- **[OpenBLAS]**            — a fast, open, and maintained [basic linear algebra subprograms (BLAS)](http://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms) library, based on [Kazushige Goto's](http://en.wikipedia.org/wiki/Kazushige_Goto) famous [GotoBLAS](http://www.tacc.utexas.edu/tacc-projects/gotoblas2/).
+- **[LAPACK]**              — a library of linear algebra routines for solving systems of simultaneous linear equations, least-squares solutions of linear systems of equations, eigenvalue problems, and singular value problems.
+- **[AMOS]**		    - Subroutines for computing Bessel functions and Airy functions.
+- **[SuiteSparse]**         — a library of linear algebra routines for sparse matrices.
+- **[ARPACK]**              — a collection of subroutines designed to solve large, sparse eigenvalue problems.
+- **[FFTW]**                — library for computing fast Fourier transforms very quickly and efficiently.
+- **[PCRE]**                — Perl-compatible regular expressions library.
+- **[D3]**                  — JavaScript visualization library.
 
 [GNU make]:     http://www.gnu.org/software/make/
 [gcc]:          http://gcc.gnu.org/
@@ -105,11 +110,13 @@ When installing from source, these libraries are automatically downloaded and co
 [OpenBLAS]:     https://github.com/xianyi/OpenBLAS#readme
 [LAPACK]:       http://www.netlib.org/lapack/
 [SuiteSparse]:  http://www.cise.ufl.edu/research/sparse/SuiteSparse/
+[AMOS]:		http://netlib.org/amos
 [ARPACK]:       http://forge.scilab.org/index.php/p/arpack-ng/
 [FFTW]:         http://www.fftw.org/
 [PCRE]:         http://www.pcre.org/
-[GNU readline]: http://cnswww.cns.cwru.edu/php/chet/readline/rltop.html
 [LLVM]:         http://www.llvm.org/
+[FemtoLisp]:	http://code.google.com/p/femtolisp/
+[GNU readline]: http://cnswww.cns.cwru.edu/php/chet/readline/rltop.html
 [D3]:           http://mbostock.github.com/d3/
 
 <a name="Directories"/>
@@ -130,9 +137,7 @@ When installing from source, these libraries are automatically downloaded and co
 
 Because of the rapid pace of development at this point, we recommend installing the latest Julia from source, but platform-specific tarballs with containing pre-compiled binaries are also available for download:
 
-- **GNU/Linux x86:** <https://github.com/downloads/JuliaLang/julia/julia-77bdd202ec-Linux-i686.tar.gz>
-- **GNU/Linux x86/64:** <https://github.com/downloads/JuliaLang/julia/julia-1fdd1e4e56-Linux-x86_64.tar.gz>
-- **Darwin/OS X x86/64:** <https://github.com/downloads/JuliaLang/julia/julia-c4865bd18d-Darwin-i386.tar.gz>
+- **All platforms:** <https://github.com/JuliaLang/julia/downloads>
 
 Download the appropriate tarball and untar it somewhere;
 for example, if you are on an OS X (Darwin) x86/64 system, do the following:
@@ -167,3 +172,37 @@ The second binding allows `Shift-Enter` to insert a newline without evaluating t
 On Linux systems, the `Shift-Enter` binding can be set by placing the following line in the file `.xmodmaprc` in your home directory:
 
     keysym Return = Return Linefeed
+
+<a name="Web-REPL-and-grahpics">
+## Web REPL and graphics
+
+Julia has a web REPL with very preliminary graphics
+capabilities. Follow these instructions for setting up the web repl
+locally. In external, doing `make install-lighttpd` will download and
+build lighttpd. Use the launch-webserver script to start the webserver
+and web-repl. Point your browser to `http://localhost:2000/`.
+
+Try `plot(cumsum(randn(1000)))`
+
+### System installed lighttpd
+
+If you want to use your own lighttpd, then the process is something like this:
+
+1) Install lighttpd
+
+2) Configure lighttpd
+
+The config file is /etc/lighttpd/lighttpd.conf. Add "mod_scgi" to server.modules. Set server.document-root to point to path_to_julia/ui/website. Add something like this to the bottom (you can use whatever port you want):
+
+    scgi.server = (
+      ".scgi" =>
+      (( "host" => "127.0.0.1",
+         "port" => 2001
+      ))
+    )
+
+3) Start lighttpd: sudo /etc/init.d/lighttpd start
+
+4) Start the julia server: your_path_to_julia/julia-release-webserver -p 2001
+
+5) Point your browser to http://localhost
