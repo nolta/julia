@@ -356,8 +356,8 @@ lc(s::String) = TransformedString((c,i)->lc(c), s)
 ucfirst(s::String) = TransformedString((c,i)->i==1 ? uc(c) : c, s)
 lcfirst(s::String) = TransformedString((c,i)->i==1 ? lc(c) : c, s)
 
-uppercase = uc
-lowercase = lc
+const uppercase = uc
+const lowercase = lc
 
 ## string map ##
 
