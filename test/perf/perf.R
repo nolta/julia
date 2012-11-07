@@ -42,31 +42,30 @@ timeit("parse_int", parseintperf, 1000)
 
 ## quicksort ##
 
-qsort_kernel = function(a, lo, hi) {
-    i = lo
-    j = hi
-    while (i < hi) {
-        pivot = a[floor((lo+hi)/2)]
-        while (i <= j) {
-            while (a[i] < pivot) i = i + 1
-            while (a[j] > pivot) j = j - 1
-            if (i <= j) {
-                t = a[i]
-                a[i] = a[j]
-                a[j] = t
-            }
-            i = i + 1;
-            j = j - 1;
-        }
-        if (lo < j) qsort_kernel(a, lo, j)
-        lo = i
-        j = hi
-    }
-    return(a)
-}
-
 qsort = function(a) {
-  return(qsort_kernel(a, 1, length(a)))
+    qsort_kernel = function(lo, hi) {
+        i = lo
+        j = hi
+        while (i < hi) {
+            pivot = a[floor((lo+hi)/2)]
+            while (i <= j) {
+                while (a[i] < pivot) i = i + 1
+                while (a[j] > pivot) j = j - 1
+                if (i <= j) {
+                    t = a[i]
+                    a[i] <<- a[j]
+                    a[j] <<- t
+                    i = i + 1;
+                    j = j - 1;
+                }
+            }
+            if (lo < j) qsort_kernel(lo, j)
+            lo = i
+            j = hi
+        }
+    }
+    qsort_kernel(1, length(a))
+    return(a)
 }
 
 sortperf = function(n) {
@@ -74,6 +73,7 @@ sortperf = function(n) {
     return(qsort(v))
 }
 
+assert(!is.unsorted(sortperf(5000)))
 timeit('quicksort', sortperf, 5000)
 
 ## mandel ##
@@ -102,7 +102,7 @@ mandelperf = function() {
     return(M)
 }
 
-assert(sum(mandelperf()) == 14660)
+assert(sum(mandelperf()) == 14791)
 timeit("mandel", mandelperf)
 
 ## pi_sum ##
@@ -137,8 +137,8 @@ randmatstat = function(t) {
         v[i] = sum(diag((t(P)%*%P)^4))
         w[i] = sum(diag((t(Q)%*%Q)^4))
     }
-    s1 = sd(v)/mean(v)
-    s2 = sd(w)/mean(w)
+    s1 = apply(v,2,sd)/mean(v)
+    s2 = apply(w,2,sd)/mean(w)
     return(c(s1,s2))
 }
 

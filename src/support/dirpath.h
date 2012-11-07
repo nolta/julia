@@ -1,5 +1,5 @@
-#ifndef __DIRPATH_H_
-#define __DIRPATH_H_
+#ifndef DIRPATH_H
+#define DIRPATH_H
 
 #ifdef WIN32
 #define PATHSEP '\\'
@@ -15,9 +15,5 @@
 #define PATHLISTSEPSTRING ":"
 #define ISPATHSEP(c) ((c)=='/')
 #endif
-
-void get_cwd(char *buf, size_t size);
-int set_cwd(char *buf);
-DLLEXPORT char *get_exename(char *buf, size_t size);
 
 #endif

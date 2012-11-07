@@ -1,21 +1,25 @@
 JULIAHOME = $(abspath ../..)
 include $(JULIAHOME)/Make.inc
 
+override CFLAGS += $(JCFLAGS)
+override CXXFLAGS += $(JCXXFLAGS)
+
 NAME = flisp
 EXENAME = $(NAME)
 LIBTARGET = lib$(NAME)
 
 SRCS = flisp.c builtins.c string.c equalhash.c table.c iostream.c \
-	julia_extensions.c
+        julia_extensions.c
+
 OBJS = $(SRCS:%.c=%.o)
 DOBJS = $(SRCS:%.c=%.do)
 LLTDIR = ../support
-LLT = $(LLTDIR)/libsupport.a
+LLT = $(LLTDIR)/libsupport.a $(USRLIB)/uv.a
 
-FLAGS = -falign-functions -Wall -Wno-strict-aliasing -I$(LLTDIR) $(CFLAGS) \
+FLAGS = -Wall -Wno-strict-aliasing -I$(LLTDIR) $(CFLAGS) \
 	-DUSE_COMPUTED_GOTO $(HFILEDIRS:%=-I%) $(LIBDIRS:%=-L%) -fvisibility=hidden
 LIBFILES = $(LLT)
-LIBS = $(LIBFILES) -lm $(GCLIBS)
+LIBS = $(LIBFILES) -lm -lpthread
 
 DEBUGFLAGS += $(FLAGS)
 SHIPFLAGS += $(FLAGS)
@@ -26,9 +30,11 @@ release: $(EXENAME)
 
 debug: $(EXENAME)-debug
 
-%.o: %.c
+HEADERS = $(wildcard *.h) $(JULIAHOME)/deps/libuv/include/uv.h
+
+%.o: %.c $(HEADERS)
 	$(QUIET_CC) $(CC) $(SHIPFLAGS) -c $< -o $@
-%.do: %.c
+%.do: %.c $(HEADERS)
 	$(QUIET_CC) $(CC) $(DEBUGFLAGS) -c $< -o $@
 
 flisp.o:   flisp.c cvalues.c types.c flisp.h print.c read.c equal.c
@@ -37,7 +43,7 @@ flmain.o:  flmain.c flisp.h
 flmain.do: flmain.c flisp.h
 
 $(LLT): $(LLTDIR)/*.h $(LLTDIR)/*.c
-	cd $(LLTDIR) && make
+	cd $(LLTDIR) && $(MAKE)
 
 $(LIBTARGET)-debug.a: $(DOBJS)
 	rm -rf $@

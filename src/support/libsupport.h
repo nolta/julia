@@ -1,6 +1,7 @@
-#ifndef __LIBSUPPORT_H_
-#define __LIBSUPPORT_H_
+#ifndef LIBSUPPORT_H
+#define LIBSUPPORT_H
 
+#include <stdlib.h>
 #include <stdarg.h>
 #include "dtypes.h"
 #include "utils.h"
