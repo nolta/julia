@@ -1,22 +1,33 @@
+# flush C stdio output from external libraries:
+
+flush_cstdio() = ccall(:jl_flush_cstdio, Void, ())
+
 # timing
 
+# system date in seconds
 time() = ccall(:clock_now, Float64, ())
 
+# high-resolution relative time, in nanoseconds
+time_ns() = ccall(:jl_hrtime, Uint64, ())
+
+# total number of bytes allocated so far
+gc_bytes() = ccall(:jl_gc_total_bytes, Int64, ())
+
 function tic()
-    t0 = time()
-    tls(:TIMERS, (t0, get(tls(), :TIMERS, ())))
+    t0 = time_ns()
+    task_local_storage(:TIMERS, (t0, get(task_local_storage(), :TIMERS, ())))
     return t0
 end
 
 function toq()
-    t1 = time()
-    timers = get(tls(), :TIMERS, ())
+    t1 = time_ns()
+    timers = get(task_local_storage(), :TIMERS, ())
     if is(timers,())
         error("toc() without tic()")
     end
-    t0 = timers[1]
-    tls(:TIMERS, timers[2])
-    t1-t0
+    t0 = timers[1]::Uint64
+    task_local_storage(:TIMERS, timers[2])
+    (t1-t0)/1e9
 end
 
 function toc()
@@ -25,19 +36,15 @@ function toc()
     return t
 end
 
-# high-resolution time
-# returns in nanoseconds
-function time_ns()
-    return ccall(:jl_hrtime, Uint64, ())
-end
-
 # print elapsed time, return expression value
 macro time(ex)
     quote
-        local t0 = time()
+        local b0 = gc_bytes()
+        local t0 = time_ns()
         local val = $(esc(ex))
-        local t1 = time()
-        println("elapsed time: ", t1-t0, " seconds")
+        local t1 = time_ns()
+        local b1 = gc_bytes()
+        println("elapsed time: ", (t1-t0)/1e9, " seconds (", b1-b0, " bytes allocated)")
         val
     end
 end
@@ -45,365 +52,459 @@ end
 # print nothing, return elapsed time
 macro elapsed(ex)
     quote
-        local t0 = time()
+        local t0 = time_ns()
         local val = $(esc(ex))
-        time()-t0
+        (time_ns()-t0)/1e9
     end
 end
 
-function peakflops()
-    a = rand(2000,2000)
-    t = @elapsed a*a
-    t = @elapsed a*a
-    floprate = (2*2000.0^3/t)
-    println("The peak flop rate is ", floprate*1e-9, " gigaflops")
-    floprate
-end
-
-# source files, editing, function reflection
-
-function function_loc(f::Function, types)
-    for m = methods(f, types)
-        if isa(m[3],LambdaStaticData)
-            lsd = m[3]::LambdaStaticData
-            ln = lsd.line
-            if ln > 0
-                return (find_in_path(string(lsd.file)), ln)
+# measure bytes allocated without any contamination from compilation
+macro allocated(ex)
+    quote
+        let
+            local f
+            function f()
+                b0 = gc_bytes()
+                $(esc(ex))
+                b1 = gc_bytes()
+                b1-b0
             end
-        end
-    end
-    error("could not find function definition")
-end
-function_loc(f::Function) = function_loc(f, (Any...))
-
-function whicht(f, types)
-    for m = methods(f, types)
-        if isa(m[3],LambdaStaticData)
-            lsd = m[3]::LambdaStaticData
-            d = f.env.defs
-            while !is(d,())
-                if is(d.func.code, lsd)
-                    print(stdout_stream, f.env.name)
-                    show(stdout_stream, d); println(stdout_stream)
-                    return
-                end
-                d = d.next
-            end
+            f()
         end
     end
 end
 
-which(f, args...) = whicht(f, map(a->(isa(a,Type) ? Type{a} : typeof(a)), args))
+# print nothing, return value, elapsed time & bytes allocated
+macro timed(ex)
+    quote
+        local b0 = gc_bytes()
+        local t0 = time_ns()
+        local val = $(esc(ex))
+        local t1 = time_ns()
+        local b1 = gc_bytes()
+        val, (t1-t0)/1e9, b1-b0
+    end
+end
 
-edit(file::String) = edit(file, 1)
-function edit(file::String, line::Int)
-    editor = get(ENV, "JULIA_EDITOR", "emacs")
-    issrc = file[end-2:end] == ".jl"
+# searching definitions
+
+function which(f, args...)
+    ms = methods(f, map(a->(isa(a,Type) ? Type{a} : typeof(a)), args))
+    isempty(ms) && throw(MethodError(f, args))
+    ms[1]
+end
+
+macro which(ex0)
+    if isa(ex0,Expr) &&
+        any(a->(Meta.isexpr(a,:kw) || Meta.isexpr(a,:parameters)), ex0.args)
+        # keyword args not used in dispatch, so just remove them
+        args = filter(a->!(Meta.isexpr(a,:kw) || Meta.isexpr(a,:parameters)), ex0.args)
+        return Expr(:call, :which, map(esc, args)...)
+    end
+    if isa(ex0, Expr) && ex0.head == :call
+        return Expr(:call, :which, map(esc, ex0.args)...)
+    end
+    ex = expand(ex0)
+    exret = Expr(:call, :error, "expression is not a function call")
+    if !isa(ex, Expr)
+        # do nothing -> error
+    elseif ex.head == :call
+        if any(e->(isa(e,Expr) && e.head==:(...)), ex0.args) &&
+            isa(ex.args[1],TopNode) && ex.args[1].name == :apply
+            exret = Expr(:call, ex.args[1], :which,
+                         Expr(:tuple, esc(ex.args[2])),
+                         map(esc, ex.args[3:end])...)
+        else
+            exret = Expr(:call, :which, map(esc, ex.args)...)
+        end
+    elseif ex.head == :body
+        a1 = ex.args[1]
+        if isa(a1, Expr) && a1.head == :call
+            a11 = a1.args[1]
+            if a11 == :setindex!
+                exret = Expr(:call, :which, a11, map(esc, a1.args[2:end])...)
+            end
+        end
+    elseif ex.head == :thunk
+        exret = Expr(:call, :error, "expression is not a function call, or is too complex for @which to analyze; "
+                                  * "break it down to simpler parts if possible")
+    end
+    exret
+end
+
+# source files, editing
+
+function find_source_file(file)
+    (isabspath(file) || isfile(file)) && return file
+    file2 = find_in_path(file)
+    file2 != nothing && return file2
+    file2 = "$JULIA_HOME/../share/julia/base/$file"
+    isfile(file2) ? file2 : nothing
+end
+
+function edit(file::String, line::Integer)
+    if OS_NAME == :Windows || OS_NAME == :Darwin
+        default_editor = "open"
+    elseif isreadable("/etc/alternatives/editor")
+        default_editor = "/etc/alternatives/editor"
+    else
+        default_editor = "emacs"
+    end
+    editor = get(ENV,"JULIA_EDITOR", get(ENV,"VISUAL", get(ENV,"EDITOR", default_editor)))
+    if ispath(editor)
+        if isreadable(editor)
+            edpath = realpath(editor)
+            edname = basename(edpath)
+        else
+            error("can't find \"$editor\"")
+        end
+    else
+        edpath = edname = editor
+    end
+    issrc = length(file)>2 && file[end-2:end] == ".jl"
     if issrc
-        if file[1]!='/' && !is_file_readable(file)
-            file2 = "$JULIA_HOME/base/$file"
-            if is_file_readable(file2)
-                file = file2
-            end
-        end
-        if editor == "emacs"
-            jmode = "$JULIA_HOME/contrib/julia-mode.el"
-            run(`emacs $file --eval "(progn
+        file = find_source_file(file)
+    end
+    if beginswith(edname, "emacs")
+        jmode = joinpath(JULIA_HOME, "..", "..", "contrib", "julia-mode.el")
+        if issrc && isreadable(jmode)
+            run(`$edpath $file --eval "(progn
                                      (require 'julia-mode \"$jmode\")
                                      (julia-mode)
                                      (goto-line $line))"`)
-        elseif editor == "vim"
-            run(`vim $file +$line`)
-        elseif editor == "textmate"
-            run(`mate $file -l $line`)
-        elseif editor == "subl"
-            run(`subl $file:$line`)
         else
-            error("Invalid JULIA_EDITOR value: $(repr(editor))")
+            run(`$edpath $file --eval "(goto-line $line)"`)
         end
+    elseif edname == "vim"
+        run(`$edpath $file +$line`)
+    elseif edname == "textmate" || edname == "mate"
+        spawn(`$edpath $file -l $line`)
+    elseif edname == "subl"
+        spawn(`$edpath $file:$line`)
+    elseif OS_NAME == :Windows && (edname == "start" || edname == "open")
+        spawn(`start /b $file`)
+    elseif OS_NAME == :Darwin && (edname == "start" || edname == "open")
+        spawn(`open -t $file`)
+    elseif edname == "kate"
+        spawn(`$edpath $file -l $line`)
+    elseif edname == "nano"
+        run(`$edpath +$line $file`)
     else
-        if editor == "emacs"
-            run(`emacs $file --eval "(goto-line $line)"`)
-        elseif editor == "vim"
-            run(`vim $file +$line`)
-        elseif editor == "textmate"
-            run(`mate $file -l $line`)
-        elseif editor == "subl"
-            run(`subl $file:$line`)
-        else
-            error("Invalid JULIA_EDITOR value: $(repr(editor))")
-        end
+        run(`$(shell_split(edpath)) $file`)
     end
     nothing
 end
 edit(file::String) = edit(file, 1)
 
-function less(file::String, line::Int)
+function less(file::String, line::Integer)
     pager = get(ENV, "PAGER", "less")
     run(`$pager +$(line)g $file`)
 end
 less(file::String) = less(file, 1)
 
-edit(f::Function)    = edit(function_loc(f)...)
-edit(f::Function, t) = edit(function_loc(f,t)...)
-less(f::Function)    = less(function_loc(f)...)
-less(f::Function, t) = less(function_loc(f,t)...)
+edit(f::Function)    = edit(functionloc(f)...)
+edit(f::Function, t) = edit(functionloc(f,t)...)
+less(f::Function)    = less(functionloc(f)...)
+less(f::Function, t) = less(functionloc(f,t)...)
 
-disassemble(f::Function, types::Tuple) =
-    print(ccall(:jl_dump_function, Any, (Any,Any), f, types)::ByteString)
+# clipboard copy and paste
 
-function methods(f::Function)
-    if !isgeneric(f)
-        error("methods: error: not a generic function")
+@osx_only begin
+    function clipboard(x)
+        w,p = writesto(`pbcopy`)
+        print(w,x)
+        close(w)
+        wait(p)
     end
-    f.env
+    clipboard() = readall(`pbpaste`)
 end
 
-methods(t::CompositeKind) = (methods(t,Tuple);  # force constructor creation
-                             t.env)
-
-
-# require
-# Store list of files and their load time
-_jl_package_list = (ByteString=>Float64)[]
-require(fname::String) = require(bytestring(fname))
-require(f::String, fs::String...) = (require(f); for x in fs require(x); end)
-function require(name::ByteString)
-    path = find_in_path(name)
-    if !has(_jl_package_list,path)
-        load_now(name)
-    else
-        # Determine whether the file has been modified since it was last loaded
-        if mtime(path) > _jl_package_list[path]
-            load_now(name)
+@linux_only begin
+    _clipboardcmd = nothing
+    function clipboardcmd()
+        global _clipboardcmd
+        _clipboardcmd !== nothing && return _clipboardcmd
+        for cmd in (:xclip, :xsel)
+            success(`which $cmd` |> DevNull) && return _clipboardcmd = cmd
         end
+        error("no clipboard command found, please install xsel or xclip")
+    end
+    function clipboard(x)
+        c = clipboardcmd()
+        cmd = c == :xsel  ? `xsel --nodetach --input --clipboard` :
+              c == :xclip ? `xclip -quiet -in -selection clipboard` :
+            error("unexpected clipboard command: $c")
+        w,p = writesto(cmd)
+        print(w,x)
+        close(w)
+        wait(p)
+    end
+    function clipboard()
+        c = clipboardcmd()
+        cmd = c == :xsel  ? `xsel --nodetach --output --clipboard` :
+              c == :xclip ? `xclip -quiet -out -selection clipboard` :
+            error("unexpected clipboard command: $c")
+        readall(cmd)
     end
 end
 
-const load = require
+@windows_only begin
+    function clipboard(x::ByteString)
+        ccall((:OpenClipboard, "user32"), stdcall, Bool, (Ptr{Void},), C_NULL)
+        ccall((:EmptyClipboard, "user32"), stdcall, Bool, ())
+        p = ccall((:GlobalAlloc, "kernel32"), stdcall, Ptr{Void}, (Uint16,Int32), 2, length(x)+1)
+        p = ccall((:GlobalLock, "kernel32"), stdcall, Ptr{Void}, (Ptr{Void},), p)
+        # write data to locked, allocated space
+        ccall(:memcpy, Ptr{Void}, (Ptr{Void},Ptr{Uint8},Int32), p, x, length(x)+1)
+        ccall((:GlobalUnlock, "kernel32"), stdcall, Void, (Ptr{Void},), p)
+        # set clipboard data type to 13 for Unicode text/string
+        p = ccall((:SetClipboardData, "user32"), stdcall, Ptr{Void}, (Uint32, Ptr{Void}), 1, p)
+        ccall((:CloseClipboard, "user32"), stdcall, Void, ())
+    end
+    clipboard(x) = clipboard(sprint(io->print(io,x))::ByteString)
 
-# remote/parallel load
+    function clipboard()
+        ccall((:OpenClipboard, "user32"), stdcall, Bool, (Ptr{Void},), C_NULL)
+        s = bytestring(ccall((:GetClipboardData, "user32"), stdcall, Ptr{Uint8}, (Uint32,), 1))
+        ccall((:CloseClipboard, "user32"), stdcall, Void, ())
+        return s
+    end
+end
 
-include_string(txt::ByteString) = ccall(:jl_load_file_string, Void, (Ptr{Uint8},), txt)
+if !isdefined(:clipboard)
+    clipboard(x="") = error("clipboard functionality not implemented for $OS_NAME")
+end
 
-function is_file_readable(path)
-    local f
+# BLAS utility routines
+function blas_vendor()
     try
-        f = open(bytestring(path))
-    catch
-        return false
+        cglobal((:openblas_set_num_threads, Base.libblas_name), Void)
+        return :openblas
     end
-    close(f)
-    return true
+    try
+        cglobal((:MKL_Set_Num_Threads, Base.libblas_name), Void)
+        return :mkl
+    end
+    return :unknown
 end
 
-function find_in_path(fname)
-    if fname[1] == '/'
-        return realpath(fname)
+openblas_get_config() = chop(bytestring( ccall((:openblas_get_config, Base.libblas_name), Ptr{Uint8}, () )))
+
+function blas_set_num_threads(n::Integer)
+    blas = blas_vendor()
+    if blas == :openblas
+        return ccall((:openblas_set_num_threads, Base.libblas_name), Void, (Int32,), n)
+    elseif blas == :mkl
+        # MKL may let us set the number of threads in several ways
+        return ccall((:MKL_Set_Num_Threads, Base.libblas_name), Void, (Cint,), n)
     end
-    for pfx in LOAD_PATH
-        if pfx != "" && pfx[end] != '/'
-            pfxd = strcat(pfx,"/",fname)
+
+    # OSX BLAS looks at an environment variable
+    @osx_only ENV["VECLIB_MAXIMUM_THREADS"] = n
+
+    return nothing
+end
+
+function check_blas()
+    blas = blas_vendor()
+    if blas == :openblas
+        openblas_config = openblas_get_config()
+        openblas64 = ismatch(r".*USE64BITINT.*", openblas_config)
+        if Base.USE_BLAS64 != openblas64
+            if !openblas64
+                println("ERROR: OpenBLAS was not built with 64bit integer support.")
+                println("You're seeing this error because Julia was built with USE_BLAS64=1")
+                println("Please rebuild Julia with USE_BLAS64=0")
+            else
+                println("ERROR: Julia was not built with support for OpenBLAS with 64bit integer support")
+                println("You're seeing this error because Julia was built with USE_BLAS64=0")
+                println("Please rebuild Julia with USE_BLAS64=1")
+            end
+            println("Quitting.")
+            quit()
+        end
+    elseif blas == :mkl
+        if Base.USE_BLAS64
+            ENV["MKL_INTERFACE_LAYER"] = "ILP64"
+        end
+    end
+
+    #
+    # Check if BlasInt is the expected bitsize, by triggering an error
+    #
+    (_, info) = LinAlg.LAPACK.potrf!('U', [1.0 0.0; 0.0 -1.0])
+    if info != 2 # mangled info code
+        if info == 2^33
+            error("""BLAS and LAPACK are compiled with 32-bit integer support, but Julia expects 64-bit integers. Please build Julia with USE_BLAS64=0.""")
+        elseif info == 0
+            error("""BLAS and LAPACK are compiled with 64-bit integer support but Julia expects 32-bit integers. Please build Julia with USE_BLAS64=1.""")
         else
-            pfxd = strcat(pfx,fname)
-        end
-        if is_file_readable(pfxd)
-            return realpath(pfxd)
+            error("""The LAPACK library produced an undefined error code. Please verify the installation of BLAS and LAPACK.""")
         end
     end
-    return realpath(fname)
+
 end
 
-begin
-local in_load = false
-local in_remote_load = false
-local load_dict = {}
-global load_now, remote_load
+# system information
 
-load_now(fname::String) = load_now(bytestring(fname))
-function load_now(fname::ByteString)
-    if in_load
-        path = find_in_path(fname)
-        push(load_dict, fname)
-        f = open(path)
-        push(load_dict, readall(f))
-        close(f)
-        include(path)
-        _jl_package_list[path] = time()
-        return
-    elseif in_remote_load
-        for i=1:2:length(load_dict)
-            if load_dict[i] == fname
-                return include_string(load_dict[i+1])
+function versioninfo(io::IO=STDOUT, verbose::Bool=false)
+    println(io,             "Julia Version $VERSION")
+    if !isempty(GIT_VERSION_INFO.commit_short)
+      println(io,             "Commit $(GIT_VERSION_INFO.commit_short) ($(GIT_VERSION_INFO.date_string))")
+    end
+    if ccall(:jl_is_debugbuild, Bool, ())
+        println(io, "DEBUG build")
+    end
+    println(io,             "Platform Info:")
+    println(io,             "  System: ", Sys.OS_NAME, " (", Sys.MACHINE, ")")
+
+    cpu = Sys.cpu_info()
+    println(io,         "  CPU: ", cpu[1].model)
+    println(io,             "  WORD_SIZE: ", Sys.WORD_SIZE)
+    if verbose
+        lsb = ""
+        @linux_only try lsb = readchomp(`lsb_release -ds` .> DevNull) end
+        @windows_only try lsb = strip(readall(`$(ENV["COMSPEC"]) /c ver`)) end
+        if lsb != ""
+            println(io,     "           ", lsb)
+        end
+        println(io,         "  uname: ",readchomp(`uname -mprsv`))
+        println(io,         "Memory: $(Sys.total_memory()/2^30) GB ($(Sys.free_memory()/2^20) MB free)")
+        try println(io,     "Uptime: $(Sys.uptime()) sec") catch end
+        print(io,           "Load Avg: ")
+        print_matrix(io,    Sys.loadavg()')
+        println(io          )
+        Sys.cpu_summary(io)
+        println(io          )
+    end
+    if Base.libblas_name == "libopenblas" || blas_vendor() == :openblas
+        openblas_config = openblas_get_config()
+        println(io,         "  BLAS: libopenblas (", openblas_config, ")")
+    else
+        println(io,         "  BLAS: ",libblas_name)
+    end
+    println(io,             "  LAPACK: ",liblapack_name)
+    println(io,             "  LIBM: ",libm_name)
+    if verbose
+        println(io,         "Environment:")
+        for (k,v) in ENV
+            if !is(match(r"JULIA|PATH|FLAG|^TERM$|HOME",bytestring(k)), nothing)
+                println(io, "  $(k) = $(v)")
             end
         end
-    else
-        in_load = true
-        iserr, err = false, ()
+        println(io          )
+        println(io,         "Package Directory: ", Pkg.dir())
+        Pkg.status(io)
+    end
+end
+versioninfo(verbose::Bool) = versioninfo(STDOUT,verbose)
+
+# `methodswith` -- shows a list of methods using the type given
+
+function methodswith(t::Type, m::Module, showparents::Bool=false)
+    meths = Method[]
+    for nm in names(m)
         try
-            ccall(:jl_register_toplevel_eh, Void, ())
-            load_now(fname)
-            for p = 1:nprocs()
-                if p != myid()
-                    remote_do(p, remote_load, load_dict)
-                end
+           mt = eval(m, nm)
+           d = mt.env.defs
+           while !is(d,())
+               if any(map(x -> x == t || (showparents && t <: x && x != Any && x != ANY && !isa(x, TypeVar)), d.sig))
+                   push!(meths, d)
+               end
+               d = d.next
+           end
+        end
+    end
+    return meths
+end
+
+function methodswith(t::Type, showparents::Bool=false)
+    meths = Method[]
+    mainmod = current_module()
+    # find modules in Main
+    for nm in names(mainmod)
+        if isdefined(mainmod,nm)
+            mod = eval(mainmod, nm)
+            if isa(mod, Module)
+                meths = [meths, methodswith(t, mod, showparents)]
             end
-        catch e
-            iserr, err = true, e
         end
-        load_dict = {}
-        in_load = false
-        if iserr throw(err); end
+    end
+    return meths
+end
+
+## printing with color ##
+
+function with_output_color(f::Function, color::Symbol, io::IO, args...)
+    have_color || return f(io, args...)
+    print(io, get(text_colors, color, color_normal))
+    try f(io, args...)
+    finally
+        print(io, color_normal)
     end
 end
 
-function remote_load(dict)
-    load_dict = dict
-    in_remote_load = true
-    try
-        load_now(dict[1])
-    catch e
-        in_remote_load = false
-        throw(e)
-    end
-    in_remote_load = false
-    nothing
-end
-end
+print_with_color(color::Symbol, io::IO, msg::String...) =
+    with_output_color(print, color, io, msg...)
+print_with_color(color::Symbol, msg::String...) =
+    print_with_color(color, STDOUT, msg...)
 
-evalfile(fname::String) = eval(parse(readall(fname))[1])
+## file downloading ##
 
-# help
-
-_jl_help_category_list = nothing
-_jl_help_category_dict = nothing
-_jl_help_function_dict = nothing
-
-function _jl_init_help()
-    global _jl_help_category_list, _jl_help_category_dict, _jl_help_function_dict
-    if _jl_help_category_dict == nothing
-        println("Loading help data...")
-        helpdb = evalfile("$JULIA_HOME/../lib/julia/helpdb.jl")
-        _jl_help_category_list = {}
-        _jl_help_category_dict = Dict()
-        _jl_help_function_dict = Dict()
-        for (cat,func,desc) in helpdb
-            if !has(_jl_help_category_dict, cat)
-                push(_jl_help_category_list, cat)
-                _jl_help_category_dict[cat] = {}
+downloadcmd = nothing
+function download(url::String, filename::String)
+    global downloadcmd
+    if downloadcmd === nothing
+        for checkcmd in (:curl, :wget, :fetch)
+            if success(`which $checkcmd` |> DevNull)
+                downloadcmd = checkcmd
+                break
             end
-            push(_jl_help_category_dict[cat], func)
-            if !has(_jl_help_function_dict, func)
-                _jl_help_function_dict[func] = {}
-            end
-            push(_jl_help_function_dict[func], desc)
         end
     end
-end
-
-function help()
-    _jl_init_help()
-    print(
-" Welcome to Julia. The full manual is available at
-
-    http://docs.julialang.org
-
- To get help on a function, try help(function). To search all help text,
- try apropos(\"string\"). To see available functions, try help(category),
- for one of the following categories:
-
-")
-    for cat = _jl_help_category_list
-        if !isempty(_jl_help_category_dict[cat])
-            print("  ")
-            show(cat); println()
-        end
-    end
-end
-
-function help(cat::String)
-    _jl_init_help()
-    if !has(_jl_help_category_dict, cat)
-        # if it's not a category, try another named thing
-        return help_for(cat)
-    end
-    println("Help is available for the following items:")
-    for func = _jl_help_category_dict[cat]
-        print(func, " ")
-    end
-    println()
-end
-
-function _jl_print_help_entries(entries)
-    first = true
-    for desc in entries
-        if !first
-            println()
-        end
-        println(strip(desc))
-        first = false
-    end
-end
-
-help_for(s::String) = help_for(s, 0)
-function help_for(fname::String, obj)
-    _jl_init_help()
-    if has(_jl_help_function_dict, fname)
-        _jl_print_help_entries(_jl_help_function_dict[fname])
+    if downloadcmd == :wget
+        run(`wget -O $filename $url`)
+    elseif downloadcmd == :curl
+        run(`curl -o $filename -L $url`)
+    elseif downloadcmd == :fetch
+        run(`fetch -f $filename $url`)
     else
-        if isgeneric(obj)
-            repl_show(obj); println()
-        else
-            println("No help information found.")
+        error("no download agent available; install curl, wget, or fetch")
+    end
+    filename
+end
+function download(url::String)
+    filename = tempname()
+    download(url, filename)
+end
+
+## warnings and messages ##
+
+function info(msg::String...; prefix="INFO: ")
+    with_output_color(print, :blue, STDERR, prefix, chomp(string(msg...)))
+    println(STDERR)
+end
+
+# print a warning only once
+
+const have_warned = Set()
+warn_once(msg::String...) = warn(msg..., once=true)
+
+function warn(msg::String...; prefix="WARNING: ", once=false, key=nothing, bt=nothing)
+    str = chomp(bytestring(msg...))
+    if once
+        if key === nothing
+            key = str
         end
+        (key in have_warned) && return
+        push!(have_warned, key)
     end
+    with_output_color(print, :red,  STDERR, prefix, str)
+    if bt !== nothing
+        show_backtrace(STDERR, bt)
+    end
+    println(STDERR)
 end
 
-function apropos(txt::String)
-    _jl_init_help()
-    n = 0
-    r = Regex("\\Q$txt", PCRE.CASELESS)
-    for (cat, _) in _jl_help_category_dict
-        if ismatch(r, cat)
-            println("Category: \"$cat\"")
-        end
-    end
-    for (func, entries) in _jl_help_function_dict
-        if ismatch(r, func) || anyp(e->ismatch(r,e), entries)
-            for desc in entries
-                nl = search(desc,'\n')
-                if nl[1] != 0
-                    println(desc[1:(nl[1]-1)])
-                else
-                    println(desc)
-                end
-            end
-            n+=1
-        end
-    end
-    if n == 0
-        println("No help information found.")
-    end
-end
-
-function help(f::Function)
-    if is(f,help)
-        return help()
-    end
-    help_for(string(f), f)
-end
-
-help(t::CompositeKind) = help_for(string(t.name),t)
-
-function help(x)
-    show(x)
-    t = typeof(x)
-    println(" is of type $t")
-    if isa(t,CompositeKind)
-        println("  which has fields $(t.names)")
-    end
-end
-
-# misc
-
-times(f::Function, n::Int) = for i=1:n f() end
+warn(err::Exception; prefix="ERROR: ", kw...) =
+    warn(sprint(io->showerror(io,err)), prefix=prefix; kw...)

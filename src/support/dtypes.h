@@ -1,6 +1,44 @@
 #ifndef DTYPES_H
 #define DTYPES_H
 
+#include <stddef.h>
+#include <stddef.h> // double include of stddef.h fixes #3421
+#include <stdint.h>
+
+#include "platform.h"
+
+#if !defined(_OS_WINDOWS_)
+#include <inttypes.h>
+#endif
+
+#if defined(_OS_WINDOWS_)
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+
+#if !defined(_COMPILER_MINGW_)
+
+#define strtoull                                            _strtoui64
+#define strtoll                                             _strtoi64
+#define strcasecmp                                          _stricmp 
+#define strncasecmp                                         _strnicmp
+#define snprintf                                            _snprintf
+#define stat                                                _stat
+
+#define STDIN_FILENO                                        0
+#define STDOUT_FILENO                                       1
+#define STDERR_FILENO                                       2
+
+#endif /* !_COMPILER_MINGW_ */
+
+#if defined(_COMPILER_MICROSOFT_)
+#define isnan _isnan
+#endif /* _COMPILER_MICROSOFT_ */
+
+#endif /* _OS_WINDOWS_ */
+
+
 /*
   This file defines sane integer types for our target platforms. This
   library only runs on machines with the following characteristics:
@@ -16,20 +54,19 @@
   We assume the LP64 convention for 64-bit platforms.
 */
 
-#ifdef WIN32
+#ifdef _OS_WINDOWS_
 #define STDCALL __stdcall
-# ifdef IMPORT_EXPORTS
-#  define DLLEXPORT __declspec(dllimport)
-# else
+# ifdef LIBRARY_EXPORTS
 #  define DLLEXPORT __declspec(dllexport)
+# else
+#  define DLLEXPORT __declspec(dllimport)
 # endif
 #else
 #define STDCALL
 #define DLLEXPORT __attribute__ ((visibility("default")))
 #endif
 
-#ifdef __linux__
-#include <features.h>
+#ifdef _OS_LINUX_
 #include <endian.h>
 #define LITTLE_ENDIAN  __LITTLE_ENDIAN
 #define BIG_ENDIAN     __BIG_ENDIAN
@@ -37,7 +74,7 @@
 #define BYTE_ORDER     __BYTE_ORDER
 #endif
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__FreeBSD__)
 #include <machine/endian.h>
 #define __LITTLE_ENDIAN  LITTLE_ENDIAN
 #define __BIG_ENDIAN     BIG_ENDIAN
@@ -45,7 +82,7 @@
 #define __BYTE_ORDER     BYTE_ORDER
 #endif
 
-#ifdef WIN32
+#ifdef _OS_WINDOWS_
 #define __LITTLE_ENDIAN	1234
 #define __BIG_ENDIAN	4321
 #define __PDP_ENDIAN	3412
@@ -78,68 +115,41 @@
 #define LLT_REALLOC(p,n) realloc((p),(n))
 #define LLT_FREE(x) free(x)
 
-typedef int bool_t;
-
-#if defined(__INTEL_COMPILER) && defined(WIN32)
-# define STATIC_INLINE static
-# define INLINE
-# ifdef __LP64__
-typedef unsigned long size_t;
-# else
-typedef unsigned int size_t;
-# endif
+#if defined(_OS_WINDOWS_) && defined(_COMPILER_INTEL_)
+#  define STATIC_INLINE static
+#  define INLINE
+#elif defined(_OS_WINDOWS_) && defined(_COMPILER_MICROSOFT_)
+#  define STATIC_INLINE static __inline
+#  define INLINE __inline
 #else
 # define STATIC_INLINE static inline
 # define INLINE inline
 #endif
 
+typedef int bool_t;
 typedef unsigned char  byte_t;   /* 1 byte */
-#if defined(WIN32)
-typedef short int16_t;
-typedef int int32_t;
-typedef long long int64_t;
-typedef unsigned char u_int8_t;
-typedef unsigned short u_int16_t;
-typedef unsigned int u_int32_t;
-#ifdef __LP64__
-typedef unsigned long u_int64_t;
-#else
-typedef unsigned long long u_int64_t;
-#endif
-#ifdef __INTEL_COMPILER
-typedef signed char int8_t;
-typedef short int16_t;
-typedef int int32_t;
-#endif
-#else
-#include <sys/types.h>
-#endif
 
-#ifdef __LP64__
+#ifdef _P64
 #define TOP_BIT 0x8000000000000000
 #define NBITS 64
-typedef unsigned long uint_t;  // preferred int type on platform
-typedef long int_t;
-typedef int64_t offset_t;
-typedef u_int64_t index_t;
-typedef int64_t ptrint_t; // pointer-size int
-typedef u_int64_t u_ptrint_t;
+typedef uint64_t uint_t;  // preferred int type on platform
+typedef int64_t int_t;
 #else
 #define TOP_BIT 0x80000000
 #define NBITS 32
-typedef unsigned long uint_t;
-typedef long int_t;
-typedef int32_t offset_t;
-typedef u_int32_t index_t;
-typedef int32_t ptrint_t;
-typedef u_int32_t u_ptrint_t;
+typedef uint32_t uint_t;
+typedef int32_t int_t;
 #endif
+typedef ptrdiff_t ptrint_t; // pointer-size int
+typedef size_t uptrint_t;
+typedef ptrdiff_t offset_t;
+typedef size_t index_t;
 
-typedef u_int8_t  uint8_t;
-typedef u_int16_t uint16_t;
-typedef u_int32_t uint32_t;
-typedef u_int64_t uint64_t;
-typedef u_ptrint_t uptrint_t;
+typedef uint8_t  u_int8_t;
+typedef uint16_t u_int16_t;
+typedef uint32_t u_int32_t;
+typedef uint64_t u_int64_t;
+typedef uptrint_t u_ptrint_t;
 
 #define LLT_ALIGN(x, sz) (((x) + (sz-1)) & (-sz))
 
@@ -163,20 +173,6 @@ typedef u_ptrint_t uptrint_t;
 #define S32_MIN    (-S32_MAX - 1L)
 #define BIT31      0x80000000
 
-#define DBL_EPSILON      2.2204460492503131e-16
-#define FLT_EPSILON      1.192092896e-7
-#define DBL_MAX          1.7976931348623157e+308
-#define DBL_MIN          2.2250738585072014e-308
-#define FLT_MAX          3.402823466e+38
-#define FLT_MIN          1.175494351e-38
-#define LOG2_10          3.3219280948873626
-#define rel_zero(a, b) (fabs((a)/(b)) < DBL_EPSILON)
-#define sign_bit(r) ((*(int64_t*)&(r)) & BIT63)
-#define LABS(n) (((n)^((n)>>(NBITS-1))) - ((n)>>(NBITS-1)))
-#define NBABS(n,nb) (((n)^((n)>>((nb)-1))) - ((n)>>((nb)-1)))
-#define DFINITE(d) (((*(int64_t*)&(d))&0x7ff0000000000000LL)!=0x7ff0000000000000LL)
-#define DNAN(d) ((d)!=(d))
-
 extern double D_PNAN;
 extern double D_NNAN;
 extern double D_PINF;
@@ -191,12 +187,12 @@ typedef enum { T_INT8, T_UINT8, T_INT16, T_UINT16, T_INT32, T_UINT32,
 
 #define N_NUMTYPES ((int)T_DOUBLE+1)
 
-#ifdef __LP64__
-# define T_LONG T_INT64
-# define T_ULONG T_UINT64
+#ifdef _P64
+# define T_PTRDIFF T_INT64
+# define T_SIZE T_UINT64
 #else
-# define T_LONG T_INT32
-# define T_ULONG T_UINT32
+# define T_PTRDIFF T_INT32
+# define T_SIZE T_UINT32
 #endif
 
-#endif
+#endif /* DTYPES_H */

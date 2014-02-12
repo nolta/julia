@@ -2,25 +2,27 @@
   task.c
   lightweight processes (symmetric coroutines)
 */
+#include "platform.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <sys/mman.h>
+//#include <sys/mman.h>
 #include <signal.h>
-#include <libgen.h>
-#include <unistd.h>
 #include <errno.h>
 #include "julia.h"
-#include "builtin_proto.h"
-#if defined(__APPLE__)
-#include <execinfo.h>
-#elif defined(__WIN32__)
-#include <Winbase.h>
+#include "julia_internal.h"
+#if defined(_OS_WINDOWS_)
+#include <winbase.h>
 #include <malloc.h>
+#include <dbghelp.h>
+static volatile int in_stackwalk = 0;
 #else
+#include <unistd.h>
 // This gives unwind only local unwinding options ==> faster code
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
+#include <dlfcn.h>   // for dladdr
 #endif
 
 /* This probing code is derived from Douglas Jones' user thread library */
@@ -67,7 +69,12 @@ static void boundlow(struct _probe_data *p)
 }
 
 // we need this function to exist so we can measure its stack frame!
+#if defined(_OS_WINDOWS_) && !defined(_COMPILER_MINGW_)
+static void __declspec(noinline) fill(struct _probe_data *p);
+#else
 static void fill(struct _probe_data *p) __attribute__ ((noinline));
+#endif
+
 static void fill(struct _probe_data *p)
 {
     boundlow(p);
@@ -128,12 +135,15 @@ static void _probe_arch(void)
   - stack growth
 */
 
+static jl_sym_t *done_sym;
+static jl_sym_t *failed_sym;
+static jl_sym_t *runnable_sym;
+
 extern size_t jl_page_size;
-jl_struct_type_t *jl_task_type;
+jl_datatype_t *jl_task_type;
 DLLEXPORT jl_task_t * volatile jl_current_task;
 jl_task_t *jl_root_task;
 jl_value_t * volatile jl_task_arg_in_transit;
-static volatile int n_args_in_transit;
 jl_value_t *jl_exception_in_transit;
 #ifdef JL_GC_MARKSWEEP
 jl_gcframe_t *jl_pgcstack = NULL;
@@ -146,30 +156,34 @@ jl_jmp_buf * volatile jl_jmp_target;
 
 static void save_stack(jl_task_t *t)
 {
-    if (t->done)
+    if (t->state == done_sym || t->state == failed_sym)
         return;
     volatile int _x;
     size_t nb = (char*)t->stackbase - (char*)&_x;
     char *buf;
     if (t->stkbuf == NULL || t->bufsz < nb) {
-        buf = allocb(nb);
+        buf = (char*)allocb(nb);
         t->stkbuf = buf;
         t->bufsz = nb;
     }
     else {
-        buf = t->stkbuf;
+        buf = (char*)t->stkbuf;
     }
     t->ssize = nb;
     memcpy(buf, (char*)&_x, nb);
 }
 
+#if defined(_OS_WINDOWS_) && !defined(_COMPILER_MINGW_)
+void __declspec(noinline) restore_stack(jl_task_t *t, jl_jmp_buf *where, char *p)
+#else
 void __attribute__((noinline)) restore_stack(jl_task_t *t, jl_jmp_buf *where, char *p)
+#endif
 {
-    char* _x = (char*)(t->stackbase-t->ssize);
+    char* _x = (char*)t->stackbase - t->ssize;
     if (!p) {
         p = _x;
         if ((char*)&_x > _x) {
-            p = alloca((char*)&_x - _x);
+            p = (char*)alloca((char*)&_x - _x);
     	}
         restore_stack(t, where, p);
     }
@@ -206,7 +220,7 @@ static void ctx_switch(jl_task_t *t, jl_jmp_buf *where)
     /*
       making task switching interrupt-safe is going to be challenging.
       we need JL_SIGATOMIC_BEGIN in jl_enter_handler, and then
-      JL_SIGATOMIC_END after every JL_TRY setjmp that returns zero.
+      JL_SIGATOMIC_END after every JL_TRY sigsetjmp that returns zero.
       also protect jl_eh_restore_state.
       then we need JL_SIGATOMIC_BEGIN at the top of this function (ctx_switch).
       the JL_SIGATOMIC_END at the end of this function handles the case
@@ -224,13 +238,21 @@ static void ctx_switch(jl_task_t *t, jl_jmp_buf *where)
 
         // set up global state for new task
 #ifdef JL_GC_MARKSWEEP
-        jl_current_task->state.gcstack = jl_pgcstack;
-        jl_pgcstack = t->state.gcstack;
+        jl_current_task->gcstack = jl_pgcstack;
+        jl_pgcstack = t->gcstack;
 #endif
+
+        // restore task's current module, looking at parent tasks
+        // if it hasn't set one.
+        jl_task_t *last = t;
+        while (last->current_module == NULL && last != jl_root_task) {
+            last = last->parent;
+        }
+        if (last->current_module != NULL) {
+            jl_current_module = last->current_module;
+        }
+
         t->last = jl_current_task;
-        // by default, exit to first task to switch to this one
-        if (t->on_exit == NULL)
-            t->on_exit = jl_current_task;
         jl_current_task = t;
 
 #ifdef COPY_STACKS
@@ -243,15 +265,27 @@ static void ctx_switch(jl_task_t *t, jl_jmp_buf *where)
     //JL_SIGATOMIC_END();
 }
 
+extern int jl_in_gc;
 static jl_value_t *switchto(jl_task_t *t)
 {
-    if (t->done) {
+    if (t->state == done_sym || t->state == failed_sym) {
         jl_task_arg_in_transit = (jl_value_t*)jl_null;
+        if (t->exception != jl_nothing)
+            jl_throw(t->exception);
         return t->result;
+    }
+    if (jl_in_gc) {
+        jl_error("task switch not allowed from inside gc finalizer");
     }
     ctx_switch(t, &t->ctx);
     jl_value_t *val = jl_task_arg_in_transit;
     jl_task_arg_in_transit = (jl_value_t*)jl_null;
+    if (jl_current_task->exception != NULL &&
+        jl_current_task->exception != jl_nothing) {
+        jl_value_t *exc = jl_current_task->exception;
+        jl_current_task->exception = jl_nothing;
+        jl_throw(exc);
+    }
     return val;
 }
 
@@ -339,19 +373,30 @@ static void rebase_state(jl_jmp_buf *ctx, intptr_t local_sp, intptr_t new_sp)
 jl_value_t *jl_switchto(jl_task_t *t, jl_value_t *arg)
 {
     jl_task_arg_in_transit = arg;
-    n_args_in_transit = 1;
     return switchto(t);
 }
 
+static jl_function_t *task_done_hook_func=NULL;
+
 static void finish_task(jl_task_t *t, jl_value_t *resultval)
 {
-    assert(t->done==0);
-    t->done = 1;
+    if (t->exception != jl_nothing)
+        t->state = failed_sym;
+    else
+        t->state = done_sym;
     t->result = resultval;
     // TODO: early free of t->stkbuf
 #ifdef COPY_STACKS
     t->stkbuf = NULL;
 #endif
+    if (task_done_hook_func == NULL) {
+        task_done_hook_func = (jl_function_t*)jl_get_global(jl_base_module,
+                                                            jl_symbol("task_done_hook"));
+    }
+    if (task_done_hook_func != NULL) {
+        jl_apply(task_done_hook_func, (jl_value_t**)&t, 1);
+    }
+    assert(0);
 }
 
 static void start_task(jl_task_t *t)
@@ -359,7 +404,7 @@ static void start_task(jl_task_t *t)
     // this runs the first time we switch to t
     jl_value_t *arg = jl_task_arg_in_transit;
     jl_value_t *res;
-    JL_GC_PUSH(&arg);
+    JL_GC_PUSH1(&arg);
 
 #ifdef COPY_STACKS
     ptrint_t local_sp = (ptrint_t)jl_pgcstack;
@@ -373,24 +418,9 @@ static void start_task(jl_task_t *t)
         switch_stack(jl_current_task, jl_jmp_target);
     }
 #endif
-    if (n_args_in_transit == 0) {
-        res = jl_apply(t->start, NULL, 0);
-    }
-    else if (n_args_in_transit == 1) {
-        res = jl_apply(t->start, &arg, 1);
-    }
-    else {
-        assert(jl_is_tuple(jl_task_arg_in_transit));
-        res = jl_apply(t->start, &jl_tupleref(jl_task_arg_in_transit,0),
-                       n_args_in_transit);
-    }
+    res = jl_apply(t->start, NULL, 0);
     JL_GC_POP();
     finish_task(t, res);
-    jl_task_t *cont = t->on_exit;
-    // if parent task has exited, try its parent, and so on
-    while (cont->done)
-        cont = cont->on_exit;
-    jl_switchto(cont, t->result);
     assert(0);
 }
 
@@ -403,7 +433,7 @@ static void init_task(jl_task_t *t)
     // this runs when the task is created
     ptrint_t local_sp = (ptrint_t)&t;
     ptrint_t new_sp = (ptrint_t)t->stack + t->ssize - _frame_offset;
-#ifdef __LP64__
+#ifdef _P64
     // SP must be 16-byte aligned
     new_sp = new_sp&-16;
     local_sp = local_sp&-16;
@@ -413,177 +443,354 @@ static void init_task(jl_task_t *t)
 }
 #endif
 
-void getFunctionInfo(char **name, int *line, const char **filename, size_t pointer);
+ptrint_t bt_data[MAX_BT_SIZE+1];
+size_t bt_size = 0;
 
-static void push_frame_info_from_ip(jl_array_t *a, size_t ip)
+void getFunctionInfo(const char **name, int *line, const char **filename, size_t pointer);
+
+static const char* name_unknown = "???";
+static int frame_info_from_ip(const char **func_name, int *line_num, const char **file_name, size_t ip, int doCframes)
 {
-    char *func_name;
-    int line_num;
-    const char *file_name;
-    int i = jl_array_len(a);
-    getFunctionInfo(&func_name, &line_num, &file_name, ip);
-    if (func_name != NULL) {
-        jl_array_grow_end(a, 3);
-        jl_arrayset(a, (jl_value_t*)jl_symbol(func_name), i); i++;
-        jl_arrayset(a, (jl_value_t*)jl_symbol(file_name), i); i++;
-        jl_arrayset(a, jl_box_long(line_num), i);
-    }
-}
+    int fromC = 0;
 
-#if defined(__APPLE__)
-// stacktrace using execinfo
-static jl_value_t *build_backtrace(void)
-{
-    void *array[1024];
-    size_t ip;
-    size_t *p;
-    jl_array_t *a;
-    a = jl_alloc_cell_1d(0);
-    JL_GC_PUSH(&a);
-    
-    backtrace(array, 1023);
-    p = (size_t*)array;
-    while ((ip = *(p++)) != 0) {
-        push_frame_info_from_ip(a, ip);
-    }
-    JL_GC_POP();
-    return (jl_value_t*)a;
-}
-#elif defined(__WIN32__)
-static jl_value_t *build_backtrace(void)
-{
-    void *array[1024];
-    size_t ip;
-    size_t *p;
-    jl_array_t *a;
-    unsigned short num;
-    a = jl_alloc_cell_1d(0);
-    JL_GC_PUSH(&a);
-
-    /** MINGW does not have the necessary declarations for linking CaptureStackBackTrace*/
-#if defined(__MINGW_H)
-    HINSTANCE kernel32 = LoadLibrary("Kernel32.dll");
-
-    if (kernel32 != NULL) {
-        typedef USHORT (*CaptureStackBackTraceType)(ULONG FramesToSkip, ULONG FramesToCapture, void* BackTrace, ULONG* BackTraceHash);
-        CaptureStackBackTraceType func = (CaptureStackBackTraceType)GetProcAddress(kernel32, "RtlCaptureStackBackTrace");
-
-        if (func == NULL) {
-            FreeLibrary(kernel32);
-            kernel32 = NULL;
-            func = NULL;
-            return (jl_value_t*)a;
+    getFunctionInfo(func_name, line_num, file_name, ip);
+    if (*func_name == NULL && doCframes) {
+        fromC = 1;
+#if defined(_OS_WINDOWS_)
+        if (in_stackwalk) {
+            *func_name = name_unknown;
+            *file_name = name_unknown;
+            *line_num = ip;
         }
         else {
-            num = func(0, 1023, array, NULL);
-        }
-    }
-    else {
-        JL_PUTS("Failed to load kernel32.dll", JL_STDERR);
-        jl_exit(1);
-    }
-    FreeLibrary(kernel32);
-#else
-    num = RtlCaptureStackBackTrace(0, 1023, array, NULL);
-#endif
+            in_stackwalk = 1;
+            DWORD64 dwDisplacement64 = 0;
+            DWORD64 dwAddress = ip;
 
-    p = (size_t*)array;
-    while ((ip = *(p++)) != 0 && (num--)>0) {
-        push_frame_info_from_ip(a, ip);
+            char buffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(TCHAR)];
+            PSYMBOL_INFO pSymbol = (PSYMBOL_INFO)buffer;
+            pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+            pSymbol->MaxNameLen = MAX_SYM_NAME;
+
+            if (SymFromAddr(GetCurrentProcess(), dwAddress, &dwDisplacement64, pSymbol)) {
+                // SymFromAddr returned success
+                *func_name = strdup(pSymbol->Name);
+            }
+            else {
+                *func_name = name_unknown;
+                // SymFromAddr failed
+                //DWORD error = GetLastError();
+                //printf("SymFromAddr returned error : %d\n", error);
+            }
+
+            IMAGEHLP_LINE64 line;
+            DWORD dwDisplacement = 0;
+            line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
+
+            if (SymGetLineFromAddr64(GetCurrentProcess(), dwAddress, &dwDisplacement, &line)) {
+                // SymGetLineFromAddr64 returned success
+                *file_name = strdup(line.FileName);
+                *line_num = line.LineNumber;
+            }
+            else {
+                *file_name = name_unknown;
+                *line_num = ip;
+                // SymGetLineFromAddr64 failed
+                //DWORD error = GetLastError();
+                //printf("SymGetLineFromAddr64 returned error : %d\n", error);
+            }
+            in_stackwalk = 0;
+        }
+#else
+        Dl_info dlinfo;
+        if (dladdr((void*)ip, &dlinfo) != 0) {
+            *file_name = (dlinfo.dli_fname != NULL) ? dlinfo.dli_fname : name_unknown;
+            if (dlinfo.dli_sname != NULL) {
+                *func_name = dlinfo.dli_sname;
+                // line number in C looks tricky. addr2line and libbfd seem promising. For now, punt and just return address offset.
+                *line_num = ip-(size_t)dlinfo.dli_saddr;
+            }
+            else {
+                *func_name = name_unknown;
+                *line_num = 0;
+            }
+        }
+        else {
+            *func_name = name_unknown;
+            *file_name = name_unknown;
+            *line_num = ip;
+        }
+#endif
     }
-    JL_GC_POP();
-    return (jl_value_t*)a;
+    return fromC;
+}
+
+#if defined(_OS_WINDOWS_)
+int needsSymRefreshModuleList;
+BOOL (WINAPI *hSymRefreshModuleList)(HANDLE);
+DLLEXPORT size_t rec_backtrace(ptrint_t *data, size_t maxsize)
+{
+    CONTEXT Context;
+    memset(&Context, 0, sizeof(Context));
+    in_stackwalk = 1;
+    RtlCaptureContext(&Context);
+    in_stackwalk = 0;
+    return rec_backtrace_ctx(data, maxsize, &Context);
+}
+DLLEXPORT size_t rec_backtrace_ctx(ptrint_t *data, size_t maxsize, CONTEXT *Context)
+{
+    if (in_stackwalk) {
+        return 0;
+    }
+    STACKFRAME64 stk;
+    memset(&stk, 0, sizeof(stk));
+
+    if (needsSymRefreshModuleList && hSymRefreshModuleList != 0) {
+        in_stackwalk = 1;
+        hSymRefreshModuleList(GetCurrentProcess());
+        in_stackwalk = 0;
+        needsSymRefreshModuleList = 0;
+    }
+#if defined(_CPU_X86_64_) 
+    DWORD MachineType = IMAGE_FILE_MACHINE_AMD64;
+    stk.AddrPC.Offset = Context->Rip;
+    stk.AddrStack.Offset = Context->Rsp;
+    stk.AddrFrame.Offset = Context->Rbp;
+#elif defined(_CPU_X86_)
+    DWORD MachineType = IMAGE_FILE_MACHINE_I386;
+    stk.AddrPC.Offset = Context->Eip;
+    stk.AddrStack.Offset = Context->Esp;
+    stk.AddrFrame.Offset = Context->Ebp;
+#else
+#error WIN16 not supported :P
+#endif
+    stk.AddrPC.Mode = AddrModeFlat;
+    stk.AddrStack.Mode = AddrModeFlat;
+    stk.AddrFrame.Mode = AddrModeFlat;
+    
+    size_t n = 0;
+    intptr_t lastsp = stk.AddrStack.Offset;
+    while (n < maxsize) {
+        in_stackwalk = 1;
+        BOOL result = StackWalk64(MachineType, GetCurrentProcess(), hMainThread,
+            &stk, Context, NULL, SymFunctionTableAccess64, SymGetModuleBase64, NULL);
+        in_stackwalk = 0;
+        data[n++] = (intptr_t)stk.AddrPC.Offset;
+        intptr_t sp = (intptr_t)stk.AddrStack.Offset;
+        if (!result || sp == 0 || 
+            (_stack_grows_up ? sp < lastsp : sp > lastsp) ||
+            stk.AddrReturn.Offset == 0)
+            break;
+        lastsp = sp;
+    }
+    return n;
 }
 #else
 // stacktrace using libunwind
-static jl_value_t *build_backtrace(void)
+DLLEXPORT size_t rec_backtrace(ptrint_t *data, size_t maxsize)
 {
-    unw_cursor_t cursor; unw_context_t uc;
-    unw_word_t ip;
-    jl_array_t *a;
-    size_t n=0;
-    a = jl_alloc_cell_1d(0);
-    JL_GC_PUSH(&a);
-    
+    unw_context_t uc;
     unw_getcontext(&uc);
-    unw_init_local(&cursor, &uc);
-    while (unw_step(&cursor) && n < 10000) { 
-        unw_get_reg(&cursor, UNW_REG_IP, &ip);
-        push_frame_info_from_ip(a, ip);
-        n++;
-    }
-    JL_GC_POP();
-    return (jl_value_t*)a;
+    return rec_backtrace_ctx(data, maxsize, &uc);
+}
+DLLEXPORT size_t rec_backtrace_ctx(ptrint_t *data, size_t maxsize, unw_context_t *uc)
+{
+    unw_cursor_t cursor;
+    unw_word_t ip;
+    size_t n=0;
+    
+    unw_init_local(&cursor, uc);
+    do {
+        if (n >= maxsize)
+            break;
+        if (unw_get_reg(&cursor, UNW_REG_IP, &ip) < 0) {
+            break;
+        }
+        data[n++] = ip;
+    } while (unw_step(&cursor) > 0);
+    return n;
+}
+#ifdef LIBOSXUNWIND
+size_t rec_backtrace_ctx_dwarf(ptrint_t *data, size_t maxsize, unw_context_t *uc)
+{
+    unw_cursor_t cursor;
+    unw_word_t ip;
+    size_t n=0;
+    
+    unw_init_local_dwarf(&cursor, uc);
+    do {
+        if (n >= maxsize)
+            break;
+        if (unw_get_reg(&cursor, UNW_REG_IP, &ip) < 0) {
+            break;
+        }
+        data[n++] = ip;
+    } while (unw_step(&cursor) > 0);
+    return n;
 }
 #endif
+#endif
 
-DLLEXPORT void jl_register_toplevel_eh(void)
+static void record_backtrace(void)
 {
-    jl_current_task->state.eh_task->state.bt = 1;
+    bt_size = rec_backtrace(bt_data, MAX_BT_SIZE);
 }
 
-// yield to exception handler
-void jl_raise(jl_value_t *e)
+static jl_value_t *array_ptr_void_type = NULL;
+DLLEXPORT jl_value_t *jl_backtrace_from_here(void)
 {
-    jl_task_t *eh = jl_current_task->state.eh_task;
-    eh->state.err = 1;
-    jl_exception_in_transit = e;
-    if (eh->state.bt) {
-        jl_value_t *tracedata, *bt;
-        tracedata = build_backtrace();
-        JL_GC_PUSH(&tracedata);
-        bt = jl_new_struct(jl_backtrace_type,
-                           jl_exception_in_transit, tracedata);
-        jl_exception_in_transit = bt;
+    if (array_ptr_void_type == NULL)
+        array_ptr_void_type = jl_apply_type((jl_value_t*)jl_array_type,
+                                            jl_tuple2(jl_voidpointer_type,
+                                                      jl_box_long(1)));
+    jl_array_t *bt = jl_alloc_array_1d(array_ptr_void_type, MAX_BT_SIZE);
+    size_t n = rec_backtrace((ptrint_t*)jl_array_data(bt), MAX_BT_SIZE);
+    if (n < MAX_BT_SIZE)
+        jl_array_del_end(bt, MAX_BT_SIZE-n);
+    return (jl_value_t*)bt;
+}
+
+DLLEXPORT jl_value_t *jl_lookup_code_address(void *ip, int doCframes)
+{
+    const char *func_name;
+    int line_num;
+    const char *file_name;
+#ifdef _OS_WINDOWS_
+    int fromC =
+#endif
+        frame_info_from_ip(&func_name, &line_num, &file_name, (size_t)ip, doCframes);
+    if (func_name != NULL) {
+        jl_value_t *r = (jl_value_t*)jl_alloc_tuple(3);
+        JL_GC_PUSH1(&r);
+        jl_tupleset(r, 0, jl_symbol(func_name));
+        jl_tupleset(r, 1, jl_symbol(file_name));
+        jl_tupleset(r, 2, jl_box_long(line_num));
+#ifdef _OS_WINDOWS_
+        if (fromC && func_name != name_unknown) free((void*)func_name);
+        if (fromC && file_name != name_unknown) free((void*)file_name);
+#endif
         JL_GC_POP();
+        return r;
     }
-    if (jl_current_task == eh && eh->state.eh_ctx!=0) {
-        jl_longjmp(*eh->state.eh_ctx, 1);
+    return (jl_value_t*)jl_null;
+}
+
+DLLEXPORT jl_value_t *jl_get_backtrace(void)
+{
+    if (array_ptr_void_type == NULL)
+        array_ptr_void_type = jl_apply_type((jl_value_t*)jl_array_type,
+                                            jl_tuple2(jl_voidpointer_type,
+                                                      jl_box_long(1)));
+    jl_array_t *bt = jl_alloc_array_1d(array_ptr_void_type, bt_size);
+    memcpy(bt->data, bt_data, bt_size*sizeof(void*));
+    return (jl_value_t*)bt;
+}
+
+//for looking up functions from gdb:
+DLLEXPORT void gdblookup(ptrint_t ip)
+{
+    const char *func_name;
+    int line_num;
+    const char *file_name;
+    int fromC = frame_info_from_ip(&func_name, &line_num, &file_name, ip, 1);
+    if (func_name != NULL) {
+        if (fromC)
+            ios_printf(ios_stderr, "%s at %s: offset %x\n", func_name, file_name, line_num);
+        else
+            ios_printf(ios_stderr, "%s at %s:%d\n", func_name, file_name, line_num);
+#ifdef _OS_WINDOWS_
+        if (fromC && func_name != name_unknown) free((void*)func_name);
+        if (fromC && file_name != name_unknown) free((void*)file_name);
+#endif
+    }
+}
+
+DLLEXPORT void jlbacktrace()
+{
+    for(size_t i=0; i < bt_size; i++)
+        gdblookup(bt_data[i]);
+}
+
+DLLEXPORT void gdbbacktrace()
+{
+    record_backtrace();
+    jlbacktrace();
+}
+
+
+// yield to exception handler
+void NORETURN throw_internal(jl_value_t *e)
+{
+    assert(e != NULL);
+    jl_exception_in_transit = e;
+    if (jl_current_task->eh != NULL) {
+        jl_longjmp(jl_current_task->eh->eh_ctx, 1);
     }
     else {
-        if (eh->done || eh->state.eh_ctx==NULL) {
-            // our handler is not available, use root task
-            JL_PRINTF(JL_STDERR, "warning: exception handler exited\n");
-            eh = jl_root_task;
+        if (jl_current_task == jl_root_task) {
+            JL_PRINTF(JL_STDERR, "fatal: error thrown and no exception handler available.\n");
+            jl_static_show(JL_STDERR, e);
+            JL_PRINTF(JL_STDERR, "\n");
+            exit(1);
         }
-        // for now, exit the task
+        jl_current_task->exception = e;
         finish_task(jl_current_task, e);
-        ctx_switch(eh, eh->state.eh_ctx);
-        // TODO: continued exception
+        assert(0);
     }
     jl_exit(1);
+}
+
+// record backtrace and raise an error
+DLLEXPORT void jl_throw(jl_value_t *e)
+{
+    assert(e != NULL);
+    record_backtrace();
+    throw_internal(e);
+}
+
+DLLEXPORT void jl_rethrow(void)
+{
+    throw_internal(jl_exception_in_transit);
+}
+
+DLLEXPORT void jl_rethrow_other(jl_value_t *e)
+{
+    throw_internal(e);
+}
+
+DLLEXPORT void jl_throw_with_superfluous_argument(jl_value_t *e, int line)
+{
+    jl_throw(e);
 }
 
 jl_task_t *jl_new_task(jl_function_t *start, size_t ssize)
 {
     size_t pagesz = jl_page_size;
     jl_task_t *t = (jl_task_t*)allocobj(sizeof(jl_task_t));
-    t->type = (jl_type_t*)jl_task_type;
+    t->type = (jl_value_t*)jl_task_type;
     ssize = LLT_ALIGN(ssize, pagesz);
     t->ssize = ssize;
-    t->on_exit = NULL;
-    t->last = jl_current_task;
-    t->tls = jl_current_task->tls;
+    t->current_module = NULL;
+    t->parent = jl_current_task;
+    t->last = NULL;
+    t->tls = jl_nothing;
     t->consumers = jl_nothing;
-    t->done = 0;
-    t->runnable = 1;
+    t->state = runnable_sym;
     t->start = start;
-    t->result = NULL;
-    t->state.err = 0;
-    t->state.bt = 0;
-    t->state.eh_task = jl_current_task->state.eh_task;
+    t->result = jl_nothing;
+    t->donenotify = jl_nothing;
+    t->exception = jl_nothing;
     // there is no active exception handler available on this stack yet
-    t->state.eh_ctx = NULL;
-    t->state.prev = NULL;
+    t->eh = NULL;
 #ifdef JL_GC_MARKSWEEP
-    t->state.gcstack = NULL;
+    t->gcstack = NULL;
 #endif
     t->stkbuf = NULL;
 
 #ifdef COPY_STACKS
     t->bufsz = 0;
 #else
-    JL_GC_PUSH(&t);
+    JL_GC_PUSH1(&t);
 
     char *stk = allocb(ssize+pagesz+(pagesz-1));
     t->stkbuf = stk;
@@ -638,12 +845,11 @@ JL_CALLABLE(jl_f_yieldto)
 {
     JL_NARGSV(yieldto, 1);
     JL_TYPECHK(yieldto, task, args[0]);
-    n_args_in_transit = nargs-1;
     if (nargs == 2) {
         jl_task_arg_in_transit = args[1];
     }
     else if (nargs > 2) {
-        jl_task_arg_in_transit = jl_f_tuple(NULL, &args[1], n_args_in_transit);
+        jl_task_arg_in_transit = jl_f_tuple(NULL, &args[1], nargs-1);
     }
     else {
         jl_task_arg_in_transit = (jl_value_t*)jl_null;
@@ -661,24 +867,36 @@ jl_function_t *jl_unprotect_stack_func;
 void jl_init_tasks(void *stack, size_t ssize)
 {
     _probe_arch();
-    jl_task_type = jl_new_struct_type(jl_symbol("Task"), jl_any_type,
-                                      jl_null,
-                                      jl_tuple(6, jl_symbol("parent"),
-                                               jl_symbol("last"),
-                                               jl_symbol("tls"),
-                                               jl_symbol("consumers"),
-                                               jl_symbol("done"),
-                                               jl_symbol("runnable")),
-                                      jl_tuple(6, jl_any_type, jl_any_type,
-                                               jl_any_type, jl_any_type,
-                                               jl_bool_type, jl_bool_type));
+    jl_task_type = jl_new_datatype(jl_symbol("Task"),
+                                   jl_any_type,
+                                   jl_null,
+                                   jl_tuple(9,
+                                            jl_symbol("parent"),
+                                            jl_symbol("last"),
+                                            jl_symbol("storage"),
+                                            jl_symbol("state"),
+                                            jl_symbol("consumers"),
+                                            jl_symbol("donenotify"),
+                                            jl_symbol("result"),
+                                            jl_symbol("exception"),
+                                            jl_symbol("code")),
+                                   jl_tuple(9,
+                                            jl_any_type, jl_any_type,
+                                            jl_any_type, jl_sym_type,
+                                            jl_any_type, jl_any_type,
+                                            jl_any_type, jl_any_type, jl_function_type),
+                                   0, 1);
     jl_tupleset(jl_task_type->types, 0, (jl_value_t*)jl_task_type);
     jl_task_type->fptr = jl_f_task;
 
+    done_sym = jl_symbol("done");
+    failed_sym = jl_symbol("failed");
+    runnable_sym = jl_symbol("runnable");
+
     jl_current_task = (jl_task_t*)allocobj(sizeof(jl_task_t));
-    jl_current_task->type = (jl_type_t*)jl_task_type;
+    jl_current_task->type = (jl_value_t*)jl_task_type;
 #ifdef COPY_STACKS
-    jl_current_task->stackbase = stack+ssize;
+    jl_current_task->stackbase = (char *)stack + ssize;
     jl_current_task->ssize = 0;  // size of saved piece
     jl_current_task->bufsz = 0;
 #else
@@ -686,21 +904,19 @@ void jl_init_tasks(void *stack, size_t ssize)
     jl_current_task->ssize = ssize;
 #endif
     jl_current_task->stkbuf = NULL;
-    jl_current_task->on_exit = jl_current_task;
+    jl_current_task->parent = jl_current_task;
+    jl_current_task->current_module = jl_current_module;
     jl_current_task->last = jl_current_task;
     jl_current_task->tls = NULL;
     jl_current_task->consumers = NULL;
-    jl_current_task->done = 0;
-    jl_current_task->runnable = 1;
+    jl_current_task->state = runnable_sym;
     jl_current_task->start = NULL;
     jl_current_task->result = NULL;
-    jl_current_task->state.err = 0;
-    jl_current_task->state.bt = 0;
-    jl_current_task->state.eh_task = jl_current_task;
-    jl_current_task->state.eh_ctx = NULL;
-    jl_current_task->state.prev = NULL;
+    jl_current_task->donenotify = NULL;
+    jl_current_task->exception = NULL;
+    jl_current_task->eh = NULL;
 #ifdef JL_GC_MARKSWEEP
-    jl_current_task->state.gcstack = NULL;
+    jl_current_task->gcstack = NULL;
 #endif
 
     jl_root_task = jl_current_task;

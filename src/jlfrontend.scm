@@ -15,14 +15,14 @@
 	   (if (and (string? msg) (>= (string-length msg) (string-length pfx))
 		    (equal? pfx
 			    (substring msg 0 (string-length pfx))))
-	       `(continue ,msg)
+	       `(incomplete ,msg)
 	       e))
 	 (begin
-	   (newline)
-	   (display "unexpected error: ")
-	   (prn e)
-	   (print-stack-trace (stacktrace))
-	   #f)))
+	   ;;(newline)
+	   ;;(display "unexpected error: ")
+	   ;;(prn e)
+	   ;;(print-stack-trace (stacktrace))
+	   '(error "malformed expression"))))
    thk))
 
 ;; assigned variables except those marked local or inside inner functions
@@ -31,6 +31,10 @@
 	((quoted? e) '())
 	(else (case (car e)
 		((=)            (list (decl-var (cadr e))))
+		((method)       (let ((n (method-expr-name e)))
+				  (if (symbol? n)
+				      (list n)
+				      '())))
 		((lambda)       '())
 		((local local!) '())
 		((break-block)  (find-possible-globals (caddr e)))
@@ -42,12 +46,17 @@
 ;; this is overwritten when we run in actual julia
 (define (defined-julia-global v) #f)
 
+(define (some-gensym? x)
+  (or (gensym? x) (memq x *gensyms*)))
+
 ;; find variables that should be forced to be global in a toplevel expr
 (define (toplevel-expr-globals e)
   (delete-duplicates
    (append
     ;; vars assigned at the outer level
-    (filter (lambda (x) (not (gensym? x))) (find-assigned-vars e '()))
+    (filter (lambda (x) (not (some-gensym? x))) (find-assigned-vars e '()))
+    ;; vars declared const outside any scope block
+    (find-decls 'const e '())
     ;; vars assigned anywhere, if they have been defined as global
     (filter defined-julia-global (find-possible-globals e)))))
 
@@ -90,7 +99,8 @@
 
 (define (expand-toplevel-expr- e)
   (let ((ex (expand-toplevel-expr-- e)))
-    (cond ((simple-assignment? ex)  (cadr ex))
+    (cond ((contains (lambda (x) (equal? x '(top ccall))) ex) ex)
+          ((simple-assignment? ex)  (cadr ex))
 	  ((and (length= ex 2) (eq? (car ex) 'body)
 		(not (lambda-ex? (cadadr ex))))
 	   ;; (body (return x)) => x
@@ -103,7 +113,10 @@
 
 (define (expand-toplevel-expr e)
   (if (and (pair? e) (eq? (car e) 'toplevel))
-      `(toplevel ,@(map expand-toplevel-expr (cdr e)))
+      ;;`(toplevel ,@(map expand-toplevel-expr (cdr e)))
+      ;; delay expansion so defined global variables take effect for later
+      ;; toplevel expressions.
+      e
       (let ((last *in-expand*))
 	(if (not last)
 	    (begin (reset-gensyms)
@@ -125,16 +138,30 @@
 
 (define (jl-parse-string s)
   (parser-wrap (lambda ()
-		 (let* ((inp  (make-token-stream (open-input-string s)))
-			(expr (julia-parse inp)))
-		   (expand-toplevel-expr expr)))))
+		 (let ((inp  (make-token-stream (open-input-string s))))
+		   ;; parse all exprs into a (toplevel ...) form
+		   (let loop ((exprs '()))
+		     ;; delay expansion so macros run in the Task executing
+		     ;; the input, not the task parsing it (issue #2378)
+		     ;; used to be (expand-toplevel-expr expr)
+		     (let ((expr (julia-parse inp)))
+		       (if (eof-object? expr)
+			   (cond ((null? exprs)     expr)
+				 ((length= exprs 1) (car exprs))
+				 (else (cons 'toplevel (reverse! exprs))))
+			   (if (and (pair? expr) (eq? (car expr) 'toplevel))
+			       (loop (nreconc (cdr expr) exprs))
+			       (loop (cons expr exprs))))))))))
 
 ;; parse file-in-a-string
-(define (jl-parse-string-stream str)
-  (jl-parser-set-stream "string" (open-input-string str)))
+(define (jl-parse-string-stream str filename)
+  (jl-parser-set-stream filename (open-input-string str)))
 
 (define (jl-parse-file s)
-  (jl-parser-set-stream s (open-input-file s)))
+  (trycatch
+   (begin (jl-parser-set-stream s (open-input-file s))
+	  #t)
+   (lambda (e) #f)))
 
 (define *filename-stack* '())
 (define *ts-stack* '())
@@ -155,19 +182,18 @@
 
 (define (jl-parser-next)
   (skip-ws-and-comments (ts:port current-token-stream))
-  (let ((e (parser-wrap (lambda ()
-			  (julia-parse current-token-stream)))))
-    (if (eof-object? e)
-	#f
-	(cons (+ (input-port-line (ts:port current-token-stream))
-		 (if (eqv? (peek-token current-token-stream) #\newline)
-		     -1 0))
-	      (parser-wrap
-	       (lambda ()
-		 (if (and (pair? e) (or (eq? (car e) 'error)
-					(eq? (car e) 'continue)))
-		     e
-		     (expand-toplevel-expr e))))))))
+  (let ((lineno (input-port-line (ts:port current-token-stream))))
+    (let ((e (parser-wrap (lambda ()
+			    (julia-parse current-token-stream)))))
+      (if (eof-object? e)
+	  e
+	  (cons lineno
+		(parser-wrap
+		 (lambda ()
+		   (if (and (pair? e) (or (eq? (car e) 'error)
+					  (eq? (car e) 'continue)))
+		       e
+		       (expand-toplevel-expr e)))))))))
 
 ; expand a piece of raw surface syntax to an executable thunk
 (define (jl-expand-to-thunk expr)

@@ -1,4 +1,23 @@
 # Check that serializer hasn't gone out-of-frame
-@assert Base._jl_ser_tag[Symbol] == 2
-@assert Base._jl_ser_tag[()] == 49
-@assert Base._jl_ser_tag[false] == 125
+@test Base.ser_tag[Symbol] == 2
+@test Base.ser_tag[()] == 47
+@test Base.ser_tag[false] == 123
+
+# issue #1770
+let
+    a = ['T', 'e', 's', 't']
+    f = IOBuffer()
+    serialize(f, a)
+    seek(f, 0)
+    @test deserialize(f) == a
+    f = IOBuffer()
+    serialize(f, a)
+    seek(f, 0)
+    @test deserialize(f) == a
+
+    # issue #4414
+    seek(f,0)
+    serialize(f, :β)
+    seek(f,0)
+    @test deserialize(f) === :β
+end

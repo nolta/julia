@@ -5,9 +5,6 @@
  The Julia Standard Library
 ############################
 
-:Release: |version|
-:Date: |today|
-
 *********
 Built-ins
 *********
@@ -16,40 +13,24 @@ Built-ins
    :maxdepth: 1
 
    base
+   sparse
+   linalg
+   constants
+   file
+   punctuation
+   sort
 
-******
-Extras
-******
+.. _built-in-modules:
+
+****************
+Built-in Modules
+****************
 
 .. toctree::
    :maxdepth: 1
 
+   pkg
+   collections
+   graphics
+   test
    profile
-   options
-   cpp
-   textwrap
-   zlib
-   strpack
-   sound
-   argparse
-   gzip
-
-****************
-Math & Numerical
-****************
-
-.. toctree::
-   :maxdepth: 1
-
-   blas
-   glpk
-
-************
-File Formats
-************
-
-.. toctree::
-   :maxdepth: 1
-
-   fitsio
-

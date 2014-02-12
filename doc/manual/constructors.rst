@@ -4,7 +4,7 @@
  Constructors  
 **************
 
-Constructors are functions that create new objects — specifically,
+Constructors [#]_ are functions that create new objects — specifically,
 instances of :ref:`man-composite-types`. In Julia,
 type objects also serve as constructor functions: they create new
 instances of themselves when applied to an argument tuple as a function.
@@ -39,6 +39,15 @@ construct objects with fewer or different types of parameters than they
 have fields. Julia's system for object construction addresses all of
 these cases and more.
 
+.. [#] Nomenclature: while the term “constructor” generally refers to
+  the entire function which constructs objects of a type, it is common to
+  abuse terminology slightly and refer to specific constructor methods as
+  “constructors”. In such situations, it is generally clear from context
+  that the term is used to mean “constructor method” rather than
+  “constructor function”, especially as it is often used in the sense of
+  singling out a particular method of the constructor from all of the
+  others.
+
 Outer Constructor Methods
 -------------------------
 
@@ -71,23 +80,6 @@ this are called *outer* constructor methods. Outer constructor methods
 can only ever create a new instance by calling another constructor
 method, such as the automatically provided default one.
 
-.. raw:: html
-
-   <div class="sidebar">
-
-A Note On Nomenclature. While the term “constructor” generally refers to
-the entire function which constructs objects of a type, it is common to
-abuse terminology slightly and refer to specific constructor methods as
-“constructors”. In such situations, it is generally clear from context
-that the term is used to mean “constructor method” rather than
-“constructor function”, especially as it is often used in the sense of
-singling out a particular method of the constructor from all of the
-others.
-
-.. raw:: html
-
-   </div>
-
 Inner Constructor Methods
 -------------------------
 
@@ -106,7 +98,9 @@ constructor method, with two differences:
 
 For example, suppose one wants to declare a type that holds a pair of
 real numbers, subject to the constraint that the first number is
-not greater than the second one. One could declare it like this::
+not greater than the second one. One could declare it like this:
+
+.. testcode::
 
     type OrderedPair
       x::Real
@@ -116,18 +110,19 @@ not greater than the second one. One could declare it like this::
     end
 
 Now ``OrderedPair`` objects can only be constructed such that
-``x <= y``::
+``x <= y``:
+
+.. doctest::
 
     julia> OrderedPair(1,2)
     OrderedPair(1,2)
 
     julia> OrderedPair(2,1)
-    out of order
-     in OrderedPair at prompt:5
+    ERROR: out of order
+     in OrderedPair at none:5
 
 You can still reach in and directly change the field values to violate
-this invariant (support for immutable composites is planned but not yet
-implemented), but messing around with an object's internals uninvited is
+this invariant, but messing around with an object's internals uninvited is
 considered poor form. You (or someone else) can also provide additional
 outer constructor methods at any later point, but once a type is
 declared, there is no way to add more inner constructor methods. Since
@@ -135,8 +130,12 @@ outer constructor methods can only create objects by calling other
 constructor methods, ultimately, some inner constructor must be called
 to create an object. This guarantees that all objects of the declared
 type must come into existence by a call to one of the inner constructor
-methods provided with the type, thereby giving some degree of real
-enforcement of a type's invariants, at least for object creation.
+methods provided with the type, thereby giving some degree of
+enforcement of a type's invariants.
+
+Of course, if the type is declared as ``immutable``, then its
+constructor-provided invariants are fully enforced. This is an important
+consideration when deciding whether a type should be immutable.
 
 If any inner constructor method is defined, no default constructor
 method is provided: it is presumed that you have supplied yourself with
@@ -175,11 +174,9 @@ with an explicit constructor::
 
     julia> T1(1.0)
     no method T1(Float64,)
-     in method_missing at /Users/stefan/projects/julia/base/base.jl:58
 
     julia> T2(1.0)
     no method T2(Float64,)
-     in method_missing at /Users/stefan/projects/julia/base/base.jl:58
 
 It is considered good form to provide as few inner constructor methods
 as possible: only those taking all arguments explicitly and enforcing
@@ -221,7 +218,9 @@ fields uninitialized. The inner constructor method can then use the
 incomplete object, finishing its initialization before returning it.
 Here, for example, we take another crack at defining the
 ``SelfReferential`` type, with a zero-argument inner constructor
-returning instances having ``obj`` fields pointing to themselves::
+returning instances having ``obj`` fields pointing to themselves:
+
+.. testcode::
 
     type SelfReferential
       obj::SelfReferential
@@ -230,9 +229,11 @@ returning instances having ``obj`` fields pointing to themselves::
     end
 
 We can verify that this constructor works and constructs objects that
-are, in fact, self-referential::
+are, in fact, self-referential:
 
-    x = SelfReferential();
+.. doctest::
+
+    julia> x = SelfReferential();
 
     julia> is(x, x)
     true
@@ -245,28 +246,43 @@ are, in fact, self-referential::
 
 Although it is generally a good idea to return a fully initialized
 object from an inner constructor, incompletely initialized objects can
-be returned::
+be returned:
 
-    type Incomplete
-      xx
+.. doctest::
 
-      Incomplete() = new()
-    end
+    julia> type Incomplete
+             xx
+             Incomplete() = new()
+           end
 
     julia> z = Incomplete();
 
 While you are allowed to create objects with uninitialized fields, any
-access to an uninitialized field is an immediate error::
+access to an uninitialized reference is an immediate error:
+
+.. doctest::
 
     julia> z.xx
-    access to undefined reference
+    ERROR: access to undefined reference
 
-This prevents uninitialized fields from propagating throughout a program
-or forcing programmers to continually check for uninitialized fields,
-the way they have to check for ``null`` values everywhere in Java: if a
-field is uninitialized and it is used in any way, an error is thrown
-immediately so no error checking is required. You can also pass
-incomplete objects to other functions from inner constructors to
+This avoids the need to continually check for ``null`` values.
+However, not all object fields are references. Julia considers some
+types to be "plain data", meaning all of their data is self-contained
+and does not reference other objects. The plain data types consist of bits
+types (e.g. ``Int``) and immutable structs of other plain data types.
+The initial contents of a plain data type is undefined::
+
+    julia> type HasPlain
+             n::Int
+             HasPlain() = new()
+           end
+
+    julia> HasPlain()
+    HasPlain(438103441441)
+
+Arrays of plain data types exhibit the same behavior.
+
+You can pass incomplete objects to other functions from inner constructors to
 delegate their completion::
 
     type Lazy
@@ -287,40 +303,39 @@ Parametric types add a few wrinkles to the constructor story. Recall
 from :ref:`man-parametric-types` that, by default,
 instances of parametric composite types can be constructed either with
 explicitly given type parameters or with type parameters implied by the
-types of the arguments given to the constructor. Here are some examples::
+types of the arguments given to the constructor. Here are some examples:
 
-    type Point{T<:Real}
-      x::T
-      y::T
-    end
+.. doctest::
+
+    julia> type Point{T<:Real}
+             x::T
+             y::T
+           end
 
     ## implicit T ##
 
     julia> Point(1,2)
-    Point(1,2)
+    Point{Int64}(1,2)
 
     julia> Point(1.0,2.5)
-    Point(1.0,2.5)
+    Point{Float64}(1.0,2.5)
 
     julia> Point(1,2.5)
-    no method Point(Int64,Float64)
-     in method_missing at /Users/stefan/projects/julia/base/base.jl:58
+    ERROR: no method Point{T<:Real}(Int64, Float64)
 
     ## explicit T ##
 
     julia> Point{Int64}(1,2)
-    Point(1,2)
+    Point{Int64}(1,2)
 
     julia> Point{Int64}(1.0,2.5)
-    no method Point(Float64,Float64)
-     in method_missing at /Users/stefan/projects/julia/base/base.jl:58
+    ERROR: no method Point{Int64}(Float64, Float64)
 
     julia> Point{Float64}(1.0,2.5)
-    Point(1.0,2.5)
+    Point{Float64}(1.0,2.5)
 
     julia> Point{Float64}(1,2)
-    no method Point(Int64,Int64)
-     in method_missing at /Users/stefan/projects/julia/base/base.jl:58
+    ERROR: no method Point{Float64}(Int64, Int64)
 
 As you can see, for constructor calls with explicit type parameters, the
 arguments must match that specific type: ``Point{Int64}(1,2)`` works,
@@ -372,48 +387,58 @@ method" errors.
 Suppose we wanted to make the constructor call ``Point(1,2.5)`` work by
 "promoting" the integer value ``1`` to the floating-point value ``1.0``.
 The simplest way to achieve this is to define the following additional
-outer constructor method::
+outer constructor method:
 
-    Point(x::Int64, y::Float64) = Point(convert(Float64,x),y)
+.. doctest::
+
+    julia> Point(x::Int64, y::Float64) = Point(convert(Float64,x),y);
 
 This method uses the ``convert`` function to explicitly convert ``x`` to
 ``Float64`` and then delegates construction to the general constructor
 for the case where both arguments are ``Float64``. With this method
 definition what was previously a "no method" error now successfully
-creates a point of type ``Point{Float64}``::
+creates a point of type ``Point{Float64}``:
+
+.. doctest::
 
     julia> Point(1,2.5)
-    Point(1.0,2.5)
+    Point{Float64}(1.0,2.5)
 
     julia> typeof(ans)
-    Point{Float64}
+    Point{Float64} (constructor with 1 method)
 
-However, other similar calls still don't work::
+However, other similar calls still don't work:
+
+.. doctest::
 
     julia> Point(1.5,2)
-    no method Point(Float64,Int64)
+    ERROR: no method Point{T<:Real}(Float64, Int64)
 
 For a much more general way of making all such calls work sensibly, see
 :ref:`man-conversion-and-promotion`. At the risk
 of spoiling the suspense, we can reveal here that the all it takes is
 the following outer method definition to make all calls to the general
-``Point`` constructor work as one would expect::
+``Point`` constructor work as one would expect:
 
-    Point(x::Real, y::Real) = Point(promote(x,y)...)
+.. doctest::
+
+    julia> Point(x::Real, y::Real) = Point(promote(x,y)...);
 
 The ``promote`` function converts all its arguments to a common type
 — in this case ``Float64``. With this method definition, the ``Point``
 constructor promotes its arguments the same way that numeric operators
-like ``+`` do, and works for all kinds of real numbers::
+like ``+`` do, and works for all kinds of real numbers:
+
+.. doctest::
 
     julia> Point(1.5,2)
-    Point(1.5,2.0)
+    Point{Float64}(1.5,2.0)
 
     julia> Point(1,1//2)
-    Point(1//1,1//2)
+    Point{Rational{Int64}}(1//1,1//2)
 
     julia> Point(1.0,1//2)
-    Point(1.0,0.5)
+    Point{Float64}(1.0,0.5)
 
 Thus, while the implicit type parameter constructors provided by default
 in Julia are fairly strict, it is possible to make them behave in a more
@@ -502,16 +527,18 @@ number, we construct a new rational for the resulting ratio slightly
 differently; this behavior is actually identical to division of a
 rational with an integer. Finally, applying ``//`` to complex integral
 values creates an instance of ``Complex{Rational}`` — a complex number
-whose real and imaginary parts are rationals::
+whose real and imaginary parts are rationals:
+
+.. doctest::
 
     julia> (1 + 2im)//(1 - 2im)
     -3//5 + 4//5im
 
     julia> typeof(ans)
-    ComplexPair{Rational{Int64}}
+    Complex{Rational{Int64}} (constructor with 1 method)
 
     julia> ans <: Complex{Rational}
-    true
+    false
 
 Thus, although the ``//`` operator usually returns an instance of
 ``Rational``, if either of its arguments are complex integers, it will

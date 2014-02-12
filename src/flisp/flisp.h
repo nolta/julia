@@ -2,18 +2,23 @@
 #define FLISP_H
 
 #include <setjmp.h>
-#include "libsupport.h"
 #include <stdint.h>
+
+#include "platform.h"
+#include "libsupport.h"
 #include "../../deps/libuv/include/uv.h"
+
+//#define MEMDEBUG
+//#define MEMDEBUG2
 
 typedef uptrint_t value_t;
 typedef int_t fixnum_t;
-#ifdef __LP64__
+#if NBITS==64
 #define T_FIXNUM T_INT64
+#define labs llabs
 #else
 #define T_FIXNUM T_INT32
 #endif
-
 
 typedef struct {
     value_t car;
@@ -57,7 +62,7 @@ typedef struct {
 #define tagptr(p,t) (((value_t)(p)) | (t))
 #define fixnum(x) ((value_t)(((fixnum_t)(x))<<2))
 #define numval(x)  (((fixnum_t)(x))>>2)
-#ifdef __LP64__
+#if NBITS==64
 #define fits_fixnum(x) (((x)>>61) == 0 || (~((x)>>61)) == 0)
 #else
 #define fits_fixnum(x) (((x)>>29) == 0 || (~((x)>>29)) == 0)
@@ -105,8 +110,12 @@ typedef struct {
 #define isconstant(s) ((s)->flags&0x1)
 #define iskeyword(s) ((s)->flags&0x2)
 #define symbol_value(s) (((symbol_t*)ptr(s))->binding)
+#ifdef MEMDEBUG2
+#define ismanaged(v) (!issymbol(v) && !isfixnum(v) && ((v)>(N_OPCODES<<3)) && !iscbuiltin(v))
+#else
 #define ismanaged(v) ((((unsigned char*)ptr(v)) >= fromspace) && \
                       (((unsigned char*)ptr(v)) < fromspace+heapsize))
+#endif
 #define isgensym(x)  (issymbol(x) && ismanaged(x))
 
 #define isfunction(x) (tag(x) == TAG_FUNCTION && (x) > (N_BUILTINS<<3))
@@ -145,7 +154,7 @@ value_t fl_list2(value_t a, value_t b);
 value_t fl_listn(size_t n, ...);
 value_t symbol(char *str);
 char *symbol_name(value_t v);
-int fl_is_keyword_name(char *str, size_t len);
+int fl_is_keyword_name(const char *str, size_t len);
 value_t alloc_vector(size_t n, int init);
 size_t llength(value_t v);
 value_t fl_compare(value_t a, value_t b);  // -1, 0, or 1
@@ -184,15 +193,26 @@ extern value_t fl_lasterror;
   else \
     for(l__ca=1; l__ca; l__ca=0, fl_restorestate(&_ctx))
 
+#if defined(_OS_WINDOWS_)
+__declspec(noreturn) void lerrorf(value_t e, char *format, ...);
+__declspec(noreturn) void lerror(value_t e, const char *msg);
+__declspec(noreturn) void fl_raise(value_t e);
+__declspec(noreturn) void type_error(char *fname, char *expected, value_t got);
+__declspec(noreturn) void bounds_error(char *fname, value_t arr, value_t ind);
+#else
 void lerrorf(value_t e, char *format, ...) __attribute__ ((__noreturn__));
 void lerror(value_t e, const char *msg) __attribute__ ((__noreturn__));
-void fl_savestate(fl_exception_context_t *_ctx);
-void fl_restorestate(fl_exception_context_t *_ctx);
 void fl_raise(value_t e) __attribute__ ((__noreturn__));
 void type_error(char *fname, char *expected, value_t got) __attribute__ ((__noreturn__));
 void bounds_error(char *fname, value_t arr, value_t ind) __attribute__ ((__noreturn__));
+#endif
+
+void fl_savestate(fl_exception_context_t *_ctx);
+void fl_restorestate(fl_exception_context_t *_ctx);
+
 extern value_t ArgError, IOError, KeyError, MemoryError, EnumerationError;
 extern value_t UnboundError;
+
 static inline void argcount(char *fname, uint32_t nargs, uint32_t c)
 {
     if (__unlikely(nargs != c))
@@ -291,10 +311,8 @@ typedef int64_t  fl_int64_t;
 typedef uint64_t fl_uint64_t;
 typedef char     fl_char_t;
 typedef char     char_t;
-typedef long     fl_long_t;
-typedef long     long_t;
-typedef unsigned long fl_ulong_t;
-typedef unsigned long ulong_t;
+typedef ptrdiff_t fl_ptrdiff_t;
+typedef size_t   fl_size_t;
 typedef double   fl_double_t;
 typedef float    fl_float_t;
 
@@ -303,7 +321,7 @@ typedef value_t (*builtin_t)(value_t*, uint32_t);
 extern value_t QUOTE;
 extern value_t int8sym, uint8sym, int16sym, uint16sym, int32sym, uint32sym;
 extern value_t int64sym, uint64sym;
-extern value_t longsym, ulongsym, bytesym, wcharsym;
+extern value_t ptrdiffsym, sizesym, bytesym, wcharsym;
 extern value_t arraysym, cfunctionsym, voidsym, pointersym;
 extern value_t stringtypesym, wcstringtypesym, emptystringsym;
 extern value_t floatsym, doublesym;
@@ -322,7 +340,7 @@ value_t cvalue_from_ref(fltype_t *type, void *ptr, size_t sz, value_t parent);
 value_t cbuiltin(char *name, builtin_t f);
 size_t cvalue_arraylen(value_t v);
 value_t size_wrap(size_t sz);
-size_t toulong(value_t n, char *fname);
+size_t tosize(value_t n, char *fname);
 value_t cvalue_string(size_t sz);
 value_t cvalue_static_cstring(const char *str);
 value_t string_from_cstr(char *str);

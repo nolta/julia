@@ -10,11 +10,8 @@ Fortran. To allow easy use of this existing code, Julia makes it simple
 and efficient to call C and Fortran functions. Julia has a "no
 boilerplate" philosophy: functions can be called directly from Julia
 without any "glue" code, code generation, or compilation — even from the
-interactive prompt. This is accomplished in three steps:
-
-1. Load a shared library and create a handle to it.
-2. Lookup a library function by name, getting a handle to it.
-3. Call the library function using the built-in ``ccall`` function.
+interactive prompt. This is accomplished just by making an appropriate call
+with ``call`` syntax, which looks like an ordinary function call.
 
 The code to be called must be available as a shared library. Most C and
 Fortran libraries ship compiled as shared libraries already, but if you
@@ -29,53 +26,54 @@ possible to perform whole-program optimizations that can even optimize
 across this boundary, but Julia does not yet support that. In the
 future, however, it may do so, yielding even greater performance gains.)
 
-Shared libraries are loaded with ``dlopen`` function, which provides
-access to the functionality of the POSIX ``dlopen(3)`` call: it locates
-a shared library binary and loads it into the process' memory allowing
-the program to access functions and variables contained in the library.
-The following call loads the standard C library, and stores the
-resulting handle in a Julia variable called ``libc``::
+Shared libraries and functions are referenced by a tuple of the 
+form ``(:function, "library")`` or ``("function", "library")`` where ``function``
+is the C-exported function name. ``library`` refers to the shared library
+name: shared libraries available in the (platform-specific) load path
+will be resolved by name, and if necessary a direct path may be specified.
 
-    libc = dlopen("libc")
-
-Once a library has been loaded, functions can be looked up by name using
-the ``dlsym`` function, which exposes the functionality of the POSIX
-``dlsym(3)`` call. This returns a handle to the ``clock`` function from
-the standard C library::
-
-    libc_clock = dlsym(libc, :clock)
+A function name may be used alone in place of the tuple (just
+``:function`` or ``"function"``). In this case the name is resolved within
+the current process. This form can be used to call C library functions,
+functions in the Julia runtime, or functions in an application linked to
+Julia.
 
 Finally, you can use ``ccall`` to actually generate a call to the
-library function. Inputs to ``ccall`` are as follows:
+library function. Arguments to ``ccall`` are as follows:
 
-1. Function reference from ``dlsym`` — a value of type ``Ptr{Void}``.
+1. (:function, "library") pair (must be a constant, but see below).
 2. Return type, which may be any bits type, including ``Int32``,
    ``Int64``, ``Float64``, or ``Ptr{T}`` for any type parameter ``T``,
-   indicating a pointer to values of type ``T``, or just ``Ptr`` for
+   indicating a pointer to values of type ``T``, or ``Ptr{Void}`` for
    ``void*`` "untyped pointer" values.
 3. A tuple of input types, like those allowed for the return type.
+   The input types must be written as a literal tuple, not a tuple-valued
+   variable or expression.
 4. The following arguments, if any, are the actual argument values
    passed to the function.
 
 As a complete but simple example, the following calls the ``clock``
 function from the standard C library::
 
-    julia> t = ccall(dlsym(libc, :clock), Int32, ())
-    5380445
+    julia> t = ccall( (:clock, "libc"), Int32, ())
+    2292761
+
+    julia> t
+    2292761
 
     julia> typeof(ans)
     Int32
 
 ``clock`` takes no arguments and returns an ``Int32``. One common gotcha
-is that a 1-tuple must be written with with a trailing comma. For
+is that a 1-tuple must be written with a trailing comma. For
 example, to call the ``getenv`` function to get a pointer to the value
 of an environment variable, one makes a call like this::
 
-    julia> path = ccall(dlsym(libc, :getenv), Ptr{Uint8}, (Ptr{Uint8},), "SHELL")
-    Ptr{Uint8} @0x00007fff5fbfd670
+    julia> path = ccall( (:getenv, "libc"), Ptr{Uint8}, (Ptr{Uint8},), "SHELL")
+    Ptr{Uint8} @0x00007fff5fbffc45
 
     julia> bytestring(path)
-    "/bin/zsh"
+    "/bin/bash"
 
 Note that the argument type tuple must be written as ``(Ptr{Uint8},)``,
 rather than ``(Ptr{Uint8})``. This is because ``(Ptr{Uint8})`` is just
@@ -98,7 +96,7 @@ in
 `env.jl <https://github.com/JuliaLang/julia/blob/master/base/env.jl>`_::
 
     function getenv(var::String)
-      val = ccall(dlsym(libc, :getenv),
+      val = ccall( (:getenv, "libc"),
                   Ptr{Uint8}, (Ptr{Uint8},), bytestring(var))
       if val == C_NULL
         error("getenv: undefined variable: ", var)
@@ -113,7 +111,7 @@ throws an exception clearly indicating the problem if the caller tries
 to get a non-existent environment variable::
 
     julia> getenv("SHELL")
-    "/bin/zsh"
+    "/bin/bash"
 
     julia> getenv("FOOBAR")
     getenv: undefined variable: FOOBAR
@@ -123,8 +121,8 @@ machine's hostname::
 
     function gethostname()
       hostname = Array(Uint8, 128)
-      ccall(dlsym(libc, :gethostname), Int32,
-            (Ptr{Uint8}, Ulong),
+      ccall( (:gethostname, "libc"), Int32,
+            (Ptr{Uint8}, Uint),
             hostname, length(hostname))
       return bytestring(convert(Ptr{Uint8}, hostname))
     end
@@ -146,13 +144,11 @@ example computes a dot product using a BLAS function.
 
 ::
 
-    libBLAS = dlopen("libLAPACK")
-
-    function compute_dot(DX::Vector, DY::Vector)
+    function compute_dot(DX::Vector{Float64}, DY::Vector{Float64})
       assert(length(DX) == length(DY))
       n = length(DX)
       incx = incy = 1
-      product = ccall(dlsym(libBLAS, :ddot_),
+      product = ccall( (:ddot_, "libLAPACK"),
                       Float64,
                       (Ptr{Int32}, Ptr{Float64}, Ptr{Int32}, Ptr{Float64}, Ptr{Int32}),
                       &n, DX, &incx, DY, &incy)
@@ -161,10 +157,11 @@ example computes a dot product using a BLAS function.
 
 The meaning of prefix ``&`` is not quite the same as in C. In
 particular, any changes to the referenced variables will not be visible
-in Julia. However, it will not cause any harm for called functions to
-attempt such modifications (that is, writing through the passed
-pointers). Since this ``&`` is not a real address operator, it may be
-used with any syntax, such as ``&0`` or ``&f(x)``.
+in Julia. However, it will
+never cause any harm for called functions to attempt such modifications
+(that is, writing through the passed pointers). Since this ``&`` is not
+a real address operator, it may be used with any syntax, such as
+``&0`` or ``&f(x)``.
 
 Note that no C header files are used anywhere in the process. Currently,
 it is not possible to pass structs and other non-primitive types from
@@ -181,12 +178,12 @@ Mapping C Types to Julia
 Julia automatically inserts calls to the ``convert`` function to convert
 each argument to the specified type. For example, the following call::
 
-    ccall(dlsym(libfoo, :foo), Void, (Int32, Float64),
+    ccall( (:foo, "libfoo"), Void, (Int32, Float64),
           x, y)
 
 will behave as if the following were written::
 
-    ccall(dlsym(libfoo, :foo), Void, (Int32, Float64),
+    ccall( (:foo, "libfoo"), Void, (Int32, Float64),
           convert(Int32, x), convert(Float64, y))
 
 When a scalar value is passed with ``&`` as an argument of type
@@ -209,43 +206,94 @@ Type correspondences
 ~~~~~~~~~~~~~~~~~~~~
 
 On all systems we currently support, basic C/C++ value types may be
-translated to Julia types as follows.
+translated to Julia types as follows. Every C type also has a corresponding
+Julia type with the same name, prefixed by C. This can help for writing portable code (and remembering that an int in C is not the same as an Int in Julia).
 
 **System-independent:**
 
--  ``bool`` ⟺ ``Bool``
--  ``char`` ⟺ ``Uint8``
--  ``signed char`` ⟺ ``Int8``
--  ``unsigned char`` ⟺ ``Uint8``
--  ``short`` ⟺ ``Int16``
--  ``unsigned short`` ⟺ ``Uint16``
--  ``int`` ⟺ ``Int32``
--  ``unsigned int`` ⟺ ``Uint32``
--  ``long long`` ⟺ ``Int64``
--  ``unsigned long long`` ⟺ ``Uint64``
--  ``float`` ⟺ ``Float32``
--  ``double`` ⟺ ``Float64``
++------------------------+-------------------+--------------------------------+
+| ``bool`` (8 bits)      | ``Cbool``         | ``Bool``                       |
++------------------------+-------------------+--------------------------------+
+| ``signed char``        |                   | ``Int8``                       |
++------------------------+-------------------+--------------------------------+
+| ``unsigned char``      | ``Cuchar``        | ``Uint8``                      |
++------------------------+-------------------+--------------------------------+
+| ``short``              | ``Cshort``        | ``Int16``                      |
++------------------------+-------------------+--------------------------------+
+| ``unsigned short``     | ``Cushort``       | ``Uint16``                     |
++------------------------+-------------------+--------------------------------+
+| ``int``                | ``Cint``          | ``Int32``                      |
++------------------------+-------------------+--------------------------------+
+| ``unsigned int``       | ``Cuint``         | ``Uint32``                     |
++------------------------+-------------------+--------------------------------+
+| ``long long``          | ``Clonglong``     | ``Int64``                      |
++------------------------+-------------------+--------------------------------+
+| ``unsigned long long`` | ``Culonglong``    | ``Uint64``                     |
++------------------------+-------------------+--------------------------------+
+| ``float``              | ``Cfloat``        | ``Float32``                    |
++------------------------+-------------------+--------------------------------+
+| ``double``             | ``Cdouble``       | ``Float64``                    |
++------------------------+-------------------+--------------------------------+
+| ``ptrdiff_t``          | ``Cptrdiff_t``    | ``Int``                        |
++------------------------+-------------------+--------------------------------+
+| ``ssize_t``            | ``Cssize_t``      | ``Int``                        |
++------------------------+-------------------+--------------------------------+
+| ``size_t``             | ``Csize_t``       | ``Uint``                       |
++------------------------+-------------------+--------------------------------+
+| ``complex float``      | ``Ccomplex_float`` (future addition)               |
++------------------------+-------------------+--------------------------------+
+| ``complex double``     | ``Ccomplex_double`` (future addition)              |
++------------------------+-------------------+--------------------------------+
+| ``void``               |                   | ``Void``                       |
++------------------------+-------------------+--------------------------------+
+| ``void*``              |                   | ``Ptr{Void}``                  |
++------------------------+-------------------+--------------------------------+
+| ``char*`` (or ``char[]``, e.g. a string)   | ``Ptr{Uint8}``                 |
++------------------------+-------------------+--------------------------------+
+| ``char**`` (or ``*char[]``)                | ``Ptr{Ptr{Uint8}}``            |
++------------------------+-------------------+--------------------------------+
+| ``struct T*`` (where T represents an       | ``Ptr{T}`` (call using         |
+| appropriately defined bits type)           | &variable_name in the          |
+|                                            | parameter list)                |
++------------------------+-------------------+--------------------------------+
+| ``struct T`` (where T represents  an       | ``T`` (call using              |
+| appropriately defined bits type)           | &variable_name in the          |
+|                                            | parameter list)                |
++------------------------+-------------------+--------------------------------+
+| ``jl_value_t*`` (any Julia Type)           | ``Ptr{Any}``                   |
++------------------------+-------------------+--------------------------------+
 
 *Note:* the ``bool`` type is only defined by C++, where it is 8 bits
 wide. In C, however, ``int`` is often used for boolean values. Since
 ``int`` is 32-bits wide (on all supported systems), there is some
 potential for confusion here.
 
+Julia's ``Char`` type is 32 bits, which is not the same as the wide
+character type (``wchar_t`` or ``wint_t``) on all platforms.
+
 A C function declared to return ``void`` will give ``nothing`` in Julia.
 
 **System-dependent:**
 
--  ``long`` ⟺ ``Int``
--  ``unsigned long`` ⟺ ``Uint``
--  ``size_t`` ⟺ ``Uint``
--  ``wchar_t`` ⟺ ``Char``
+======================  ==============  =======
+``char``                ``Cchar``       ``Int8`` (x86, x86_64)
 
-*Note:* Although ``wchar_t`` is technically system-dependent, on all the
-systems we currently support (UNIX), it is a 32 bits.
+                                        ``Uint8`` (powerpc, arm)
+``long``                ``Clong``       ``Int`` (UNIX)
 
-C functions that take an arguments of the type ``char**`` can be called
-by using a ``Ptr{Ptr{Uint8}}`` type within Julia. For example, C
-functions of the form::
+                                        ``Int32`` (Windows)
+``unsigned long``       ``Culong``      ``Uint`` (UNIX)
+
+                                        ``Uint32`` (Windows)
+``wchar_t``             ``Cwchar_t``    ``Int32`` (UNIX)
+
+                                        ``Uint16`` (Windows)
+======================  ==============  =======
+
+For string arguments (``char*``) the Julia type should be ``Ptr{Uint8}``,
+not ``ASCIIString``. C functions that take an argument of the type ``char**``
+can be called by using a ``Ptr{Ptr{Uint8}}`` type within Julia. For example, 
+C functions of the form::
 
     int main(int argc, char **argv);
 
@@ -255,7 +303,233 @@ can be called via the following Julia code::
     ccall(:main, Int32, (Int32, Ptr{Ptr{Uint8}}), length(argv), argv)
 
 
+Accessing Data through a Pointer
+--------------------------------
+The following methods are described as "unsafe" because they can cause Julia
+to terminate abruptly or corrupt arbitrary process memory due to a bad pointer
+or type declaration.
+
+Given a ``Ptr{T}``, the contents of type ``T`` can generally be copied from
+the referenced memory into a Julia object using ``unsafe_load(ptr, [index])``. The
+index argument is optional (default is 1), and performs 1-based indexing. This
+function is intentionally similar to the behavior of ``getindex()`` and ``setindex!()``
+(e.g. ``[]`` access syntax).
+
+The return value will be a new object initialized
+to contain a copy of the contents of the referenced memory. The referenced
+memory can safely be freed or released.
+
+If ``T`` is ``Any``, then the memory is assumed to contain a reference to
+a Julia object (a ``jl_value_t*``), the result will be a reference to this object,
+and the object will not be copied. You must be careful in this case to ensure
+that the object was always visible to the garbage collector (pointers do not
+count, but the new reference does) to ensure the memory is not prematurely freed.
+Note that if the object was not originally allocated by Julia, the new object
+will never be finalized by Julia's garbage collector.  If the ``Ptr`` itself
+is actually a ``jl_value_t*``, it can be converted back to a Julia object
+reference by ``unsafe_pointer_to_objref(ptr)``.  (Julia values ``v``
+can be converted to ``jl_value_t*`` pointers, as ``Ptr{Void}``, by calling
+``pointer_from_objref(v)``.)
+
+The reverse operation (writing data to a Ptr{T}), can be performed using
+``unsafe_store!(ptr, value, [index])``.  Currently, this is only supported
+for bitstypes or other pointer-free (``isbits``) immutable types.
+
+Any operation that throws an error is probably currently unimplemented
+and should be posted as a bug so that it can be resolved.
+
+If the pointer of interest is a plain-data array (bitstype or immutable), the
+function ``pointer_to_array(ptr,dims,[own])`` may be more useful. The final
+parameter should be true if Julia should "take ownership" of the underlying
+buffer and call ``free(ptr)`` when the returned ``Array`` object is finalized.
+If the ``own`` parameter is omitted or false, the caller must ensure the
+buffer remains in existence until all access is complete.
+
+Passing Pointers for Modifying Inputs
+-------------------------------------
+
+Because C doesn't support multiple return values, often C functions will take
+pointers to data that the function will modify. To accomplish this within a
+``ccall`` you need to encapsulate the value inside an array of the appropriate
+type. When you pass the array as an argument with a ``Ptr`` type, julia will
+automatically pass a C pointer to the encapsulated data::
+
+    width = Cint[0]
+    range = Cfloat[0]
+    ccall(:foo, Void, (Ptr{Cint}, Ptr{Cfloat}), width, range)
+
+This is used extensively in Julia's LAPACK interface, where an integer ``info``
+is passed to LAPACK by reference, and on return, includes the success code.
+
+Garbage Collection Safety
+-------------------------
+When passing data to a ccall, it is best to avoid using the ``pointer()``
+function. Instead define a convert method and pass the variables directly to
+the ccall. ccall automatically arranges that all of its arguments will be
+preserved from garbage collection until the call returns. If a C API will
+store a reference to memory allocated by Julia, after the ccall returns, you
+must arrange that the object remains visible to the garbage collector. The
+suggested way to handle this is to make a global variable of type 
+``Array{Any,1}`` to hold these values, until C interface notifies you that
+it is finished with them.
+
+Whenever you have created a pointer to Julia data, you must ensure the original data
+exists until you are done with using the pointer. Many methods in Julia such as
+``unsafe_load()`` and ``bytestring()`` make copies of data instead of taking ownership
+of the buffer, so that it is safe to free (or alter) the original data without
+affecting Julia. A notable exception is ``pointer_to_array()`` which, for performance
+reasons, shares (or can be told to take ownership of) the underlying buffer.
+
+The garbage collector does not guarantee any order of finalization. That is, if ``a`` 
+contained a reference to ``b`` and both ``a`` and ``b`` are due for garbage 
+collection, there is no guarantee that ``b`` would be finalized after ``a``. If
+proper finalization of ``a`` depends on ``b`` being valid, it must be handled in 
+other ways.
+
+
+Non-constant Function Specifications
+------------------------------------
+
+A ``(name, library)`` function specification must be a constant expression.
+However, it is possible to use computed values as function names by staging
+through ``eval`` as follows::
+
+    @eval ccall(($(string("a","b")),"lib"), ...
+
+This expression constructs a name using ``string``, then substitutes this
+name into a new ``ccall`` expression, which is then evaluated. Keep in mind that
+``eval`` only operates at the top level, so within this expression local
+variables will not be available (unless their values are substituted with
+``$``). For this reason, ``eval`` is typically only used to form top-level
+definitions, for example when wrapping libraries that contain many
+similar functions.
+
+Indirect Calls
+--------------
+
+The first argument to ``ccall`` can also be an expression evaluated at
+run time. In this case, the expression must evaluate to a ``Ptr``,
+which will be used as the address of the native function to call. This
+behavior occurs when the first ``ccall`` argument contains references
+to non-constants, such as local variables or function arguments.
+
+Calling Convention
+------------------
+
+The second argument to ``ccall`` can optionally be a calling convention
+specifier (immediately preceding return type). Without any specifier,
+the platform-default C calling convention is used. Other supported 
+conventions are: ``stdcall``, ``cdecl``, ``fastcall``, and ``thiscall``.
+For example (from base/libc.jl)::
+
+    hn = Array(Uint8, 256)
+    err=ccall(:gethostname, stdcall, Int32, (Ptr{Uint8}, Uint32), hn, length(hn))
+
+For more information, please see the `LLVM Language Reference`_.
+
+.. _LLVM Language Reference: http://llvm.org/docs/LangRef.html#calling-conventions
+
+Accessing Global Variables
+--------------------------
+
+Global variables exported by native libraries can be accessed by name using the
+``cglobal`` function. The arguments to ``cglobal`` are a symbol specification
+identical to that used by ``ccall``, and a type describing the value stored in
+the variable::
+
+    julia> cglobal((:errno,:libc), Int32)
+    Ptr{Int32} @0x00007f418d0816b8
+
+The result is a pointer giving the address of the value. The value can be
+manipulated through this pointer using ``unsafe_load`` and ``unsafe_store``.
+
+Passing Julia Callback Functions to C
+-------------------------------------
+
+It is possible to pass Julia functions to native functions that accept function
+pointer arguments. A classic example is the standard C library ``qsort`` function,
+declared as::
+
+    void qsort(void *base, size_t nmemb, size_t size,
+               int(*compare)(const void *a, const void *b));
+
+The ``base`` argument is a pointer to an array of length ``nmemb``, with elements of
+``size`` bytes each. ``compare`` is a callback function which takes pointers to two
+elements ``a`` and ``b`` and returns an integer less/greater than zero if ``a`` should
+appear before/after ``b`` (or zero if any order is permitted). Now, suppose that we
+have a 1d array ``A`` of values in Julia that we want to sort using the ``qsort``
+function (rather than Julia’s built-in sort function). Before we worry about calling
+``qsort`` and passing arguments, we need to write a comparison function that works for
+some arbitrary type T::
+
+    function mycompare{T}(a_::Ptr{T}, b_::Ptr{T})
+        a = unsafe_load(a_)
+        b = unsafe_load(b_)
+        return convert(Cint, a < b ? -1 : a > b ? +1 : 0)
+    end
+
+Notice that we have to be careful about the return type: ``qsort`` expects a function
+returning a C ``int``, so we must be sure to return ``Cint`` via a call to ``convert``.
+
+In order to pass this function to C, we obtain its address using the function
+``cfunction``::
+
+    const mycompare_c = cfunction(mycompare, Cint, (Ptr{Cdouble}, Ptr{Cdouble}))
+
+``cfunction`` accepts three arguments: the Julia function (``mycompare``), the return
+type (``Cint``), and a tuple of the argument types, in this case to sort an array of
+``Cdouble`` (Float64) elements.
+
+The final call to ``qsort`` looks like this::
+
+    A = [1.3, -2.7, 4.4, 3.1]
+    ccall(:qsort, Void, (Ptr{Cdouble}, Csize_t, Csize_t, Ptr{Void}),
+          A, length(A), sizeof(eltype(A)), mycompare_c)
+
+After this executes, ``A`` is changed to the sorted array ``[ -2.7, 1.3, 3.1, 4.4]``.
+Note that Julia knows how to convert an array into a ``Ptr{Cdouble}``, how to compute
+the size of a type in bytes (identical to C’s ``sizeof`` operator), and so on.
+For fun, try inserting a ``println("mycompare($a,$b)")`` line into ``mycompare``, which
+will allow you to see the comparisons that ``qsort`` is performing (and to verify that
+it is really calling the Julia function that you passed to it).
+
+More About Callbacks
+--------------------
+
+For more details on how to pass callbacks to C libraries, see this
+`blog post <http://julialang.org/blog/2013/05/callback/>`_.
+
 C++
 ---
 
-Limited support for C++ is provided by the :mod:`cpp.jl` module.
+Limited support for C++ is provided by the `Cpp <http://github.com/timholy/Cpp.jl>`_ 
+and `Clang <https://github.com/ihnorton/Clang.jl>`_ packages.
+
+Handling Platform Variations
+----------------------------
+
+When dealing with platform libraries, it is often necessary to provide special cases
+for various platforms. The variable ``OS_NAME`` can be used to write these special
+cases. Additionally, there are several macros intended to make this easier:
+``@windows``, ``@unix``, ``@linux``, and ``@osx``. Note that linux and osx are mutually 
+exclusive subsets of unix. Their usage takes the form of a ternary conditional
+operator, as demonstrated in the following examples.
+
+Simple blocks::
+
+    ccall( (@windows? :_fopen : :fopen), ...)
+
+Complex blocks::
+
+    @linux? (
+             begin
+                 some_complicated_thing(a)
+             end
+           : begin
+                 some_different_thing(a)
+             end
+           )
+
+Chaining (parentheses optional, but recommended for readability)::
+
+    @windows? :a : (@osx? :b : :c)

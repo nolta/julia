@@ -2,8 +2,7 @@
 #define IOS_H
 
 #include <stdarg.h>
-#include <pthread.h>
-#include "../../deps/libuv/include/uv.h"
+#include "uv.h"
 
 // this flag controls when data actually moves out to the underlying I/O
 // channel. memory streams are a special case of this where the data
@@ -11,7 +10,6 @@
 
 //make it compatible with UV Handles
 typedef enum { bm_none=UV_HANDLE_TYPE_MAX+1, bm_line, bm_block, bm_mem } bufmode_t;
-
 typedef enum { bst_none, bst_rd, bst_wr } bufstate_t;
 
 #define IOS_INLSIZE 54
@@ -40,7 +38,8 @@ typedef struct {
     // to be a pointer
     long fd;
 
-    unsigned char readonly:1;
+    unsigned char readable:1;
+    unsigned char writable:1;
     unsigned char ownbuf:1;
     unsigned char ownfd:1;
     unsigned char _eof:1;
@@ -58,12 +57,7 @@ typedef struct {
     // request durable writes (fsync)
     // unsigned char durable:1;
 
-    unsigned char mutex_initialized:1;
-
     int64_t userdata;
-    pthread_mutex_t mutex;
-
-    // todo: mutex
     char local[IOS_INLSIZE];
 } ios_t;
 
@@ -79,10 +73,13 @@ DLLEXPORT int ios_trunc(ios_t *s, size_t size);
 DLLEXPORT int ios_eof(ios_t *s);
 DLLEXPORT int ios_flush(ios_t *s);
 DLLEXPORT void ios_close(ios_t *s);
+DLLEXPORT int ios_isopen(ios_t *s);
 DLLEXPORT char *ios_takebuf(ios_t *s, size_t *psize);  // release buffer to caller
 // set buffer space to use
 DLLEXPORT int ios_setbuf(ios_t *s, char *buf, size_t size, int own);
 DLLEXPORT int ios_bufmode(ios_t *s, bufmode_t mode);
+DLLEXPORT int ios_get_readable(ios_t *s);
+DLLEXPORT int ios_get_writable(ios_t *s);
 DLLEXPORT void ios_set_readonly(ios_t *s);
 DLLEXPORT size_t ios_copy(ios_t *to, ios_t *from, size_t nbytes);
 DLLEXPORT size_t ios_copyall(ios_t *to, ios_t *from);
@@ -136,7 +133,7 @@ int ios_prevutf8(ios_t *s);
 DLLEXPORT int ios_putc(int c, ios_t *s);
 //wint_t ios_putwc(ios_t *s, wchar_t wc);
 DLLEXPORT int ios_getc(ios_t *s);
-int ios_peekc(ios_t *s);
+DLLEXPORT int ios_peekc(ios_t *s);
 //wint_t ios_getwc(ios_t *s);
 int ios_ungetc(int c, ios_t *s);
 //wint_t ios_ungetwc(ios_t *s, wint_t wc);

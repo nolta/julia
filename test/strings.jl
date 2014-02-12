@@ -52,14 +52,14 @@ cx = {
 }
 
 for i = 1:size(cx,1)
-    @assert cx[i,1] == cx[i,2]
-    @assert string(cx[i,2]) == unescape_string(cx[i,3])
-    if iswascii(cx[i,2]) || !iswprint(cx[i,2])
-        @assert cx[i,3] == escape_string(string(cx[i,2]))
+    @test cx[i,1] == cx[i,2]
+    @test string(cx[i,2]) == unescape_string(cx[i,3])
+    if isascii(cx[i,2]) || !isprint(cx[i,2])
+        @test cx[i,3] == escape_string(string(cx[i,2]))
     end
     for j = 1:size(cx,1)
         str = string(cx[i,2], cx[j,2])
-        @assert str == unescape_string(escape_string(str))
+        @test str == unescape_string(escape_string(str))
     end
 end
 
@@ -69,413 +69,608 @@ for i = 0:0x7f, p = {"","\0","x","xxx","\x7f","\uFF","\uFFF",
     cp = string(c,p)
     op = string(char(div(i,8)), oct(i%8), p)
     hp = string(char(div(i,16)), hex(i%16), p)
-    @assert strcat(unescape_string(strcat("\\",oct(i,1),p))) == cp
-    @assert strcat(unescape_string(strcat("\\",oct(i,2),p))) == cp
-    @assert strcat(unescape_string(strcat("\\",oct(i,3),p))) == cp
-    @assert strcat(unescape_string(strcat("\\",oct(i,4),p))) == op
-    @assert strcat(unescape_string(strcat("\\x",hex(i,1),p))) == cp
-    @assert strcat(unescape_string(strcat("\\x",hex(i,2),p))) == cp
-    @assert strcat(unescape_string(strcat("\\x",hex(i,3),p))) == hp
+    @test string(unescape_string(string("\\",oct(i,1),p))) == cp
+    @test string(unescape_string(string("\\",oct(i,2),p))) == cp
+    @test string(unescape_string(string("\\",oct(i,3),p))) == cp
+    @test string(unescape_string(string("\\",oct(i,4),p))) == op
+    @test string(unescape_string(string("\\x",hex(i,1),p))) == cp
+    @test string(unescape_string(string("\\x",hex(i,2),p))) == cp
+    @test string(unescape_string(string("\\x",hex(i,3),p))) == hp
 end
 
-@assert "\z" == unescape_string("\z") == "z"
-@assert "\X" == unescape_string("\X") == "X"
-@assert "\AbC" == unescape_string("\AbC") == "AbC"
+@test "\z" == unescape_string("\z") == "z"
+@test "\X" == unescape_string("\X") == "X"
+@test "\AbC" == unescape_string("\AbC") == "AbC"
 
-@assert "\0" == unescape_string("\\0")
-@assert "\1" == unescape_string("\\1")
-@assert "\7" == unescape_string("\\7")
-@assert "\0x" == unescape_string("\\0x")
-@assert "\1x" == unescape_string("\\1x")
-@assert "\7x" == unescape_string("\\7x")
-@assert "\00" == unescape_string("\\00")
-@assert "\01" == unescape_string("\\01")
-@assert "\07" == unescape_string("\\07")
-@assert "\70" == unescape_string("\\70")
-@assert "\71" == unescape_string("\\71")
-@assert "\77" == unescape_string("\\77")
-@assert "\00x" == unescape_string("\\00x")
-@assert "\01x" == unescape_string("\\01x")
-@assert "\07x" == unescape_string("\\07x")
-@assert "\70x" == unescape_string("\\70x")
-@assert "\71x" == unescape_string("\\71x")
-@assert "\77x" == unescape_string("\\77x")
-@assert "\000" == unescape_string("\\000")
-@assert "\001" == unescape_string("\\001")
-@assert "\007" == unescape_string("\\007")
-@assert "\070" == unescape_string("\\070")
-@assert "\071" == unescape_string("\\071")
-@assert "\077" == unescape_string("\\077")
-@assert "\170" == unescape_string("\\170")
-@assert "\171" == unescape_string("\\171")
-@assert "\177" == unescape_string("\\177")
-@assert "\0001" == unescape_string("\\0001")
-@assert "\0011" == unescape_string("\\0011")
-@assert "\0071" == unescape_string("\\0071")
-@assert "\0701" == unescape_string("\\0701")
-@assert "\0711" == unescape_string("\\0711")
-@assert "\0771" == unescape_string("\\0771")
-@assert "\1701" == unescape_string("\\1701")
-@assert "\1711" == unescape_string("\\1711")
-@assert "\1771" == unescape_string("\\1771")
+@test "\0" == unescape_string("\\0")
+@test "\1" == unescape_string("\\1")
+@test "\7" == unescape_string("\\7")
+@test "\0x" == unescape_string("\\0x")
+@test "\1x" == unescape_string("\\1x")
+@test "\7x" == unescape_string("\\7x")
+@test "\00" == unescape_string("\\00")
+@test "\01" == unescape_string("\\01")
+@test "\07" == unescape_string("\\07")
+@test "\70" == unescape_string("\\70")
+@test "\71" == unescape_string("\\71")
+@test "\77" == unescape_string("\\77")
+@test "\00x" == unescape_string("\\00x")
+@test "\01x" == unescape_string("\\01x")
+@test "\07x" == unescape_string("\\07x")
+@test "\70x" == unescape_string("\\70x")
+@test "\71x" == unescape_string("\\71x")
+@test "\77x" == unescape_string("\\77x")
+@test "\000" == unescape_string("\\000")
+@test "\001" == unescape_string("\\001")
+@test "\007" == unescape_string("\\007")
+@test "\070" == unescape_string("\\070")
+@test "\071" == unescape_string("\\071")
+@test "\077" == unescape_string("\\077")
+@test "\170" == unescape_string("\\170")
+@test "\171" == unescape_string("\\171")
+@test "\177" == unescape_string("\\177")
+@test "\0001" == unescape_string("\\0001")
+@test "\0011" == unescape_string("\\0011")
+@test "\0071" == unescape_string("\\0071")
+@test "\0701" == unescape_string("\\0701")
+@test "\0711" == unescape_string("\\0711")
+@test "\0771" == unescape_string("\\0771")
+@test "\1701" == unescape_string("\\1701")
+@test "\1711" == unescape_string("\\1711")
+@test "\1771" == unescape_string("\\1771")
 
-@assert "\x0" == unescape_string("\\x0")
-@assert "\x1" == unescape_string("\\x1")
-@assert "\xf" == unescape_string("\\xf")
-@assert "\xF" == unescape_string("\\xF")
-@assert "\x0x" == unescape_string("\\x0x")
-@assert "\x1x" == unescape_string("\\x1x")
-@assert "\xfx" == unescape_string("\\xfx")
-@assert "\xFx" == unescape_string("\\xFx")
-@assert "\x00" == unescape_string("\\x00")
-@assert "\x01" == unescape_string("\\x01")
-@assert "\x0f" == unescape_string("\\x0f")
-@assert "\x0F" == unescape_string("\\x0F")
-
-# TODO: more Unicode testing here.
-
-@assert S"foo\xe2\x88\x80" == "foo\xe2\x88\x80"
-
-# TODO: the above is only one of many needed tests
+@test "\x0" == unescape_string("\\x0")
+@test "\x1" == unescape_string("\\x1")
+@test "\xf" == unescape_string("\\xf")
+@test "\xF" == unescape_string("\\xF")
+@test "\x0x" == unescape_string("\\x0x")
+@test "\x1x" == unescape_string("\\x1x")
+@test "\xfx" == unescape_string("\\xfx")
+@test "\xFx" == unescape_string("\\xFx")
+@test "\x00" == unescape_string("\\x00")
+@test "\x01" == unescape_string("\\x01")
+@test "\x0f" == unescape_string("\\x0f")
+@test "\x0F" == unescape_string("\\x0F")
 
 # integer parsing
-@assert parse_int(Int32,"0",36) == 0
-@assert parse_int(Int32,"1",36) == 1
-@assert parse_int(Int32,"9",36) == 9
-@assert parse_int(Int32,"A",36) == 10
-@assert parse_int(Int32,"a",36) == 10
-@assert parse_int(Int32,"B",36) == 11
-@assert parse_int(Int32,"b",36) == 11
-@assert parse_int(Int32,"F",36) == 15
-@assert parse_int(Int32,"f",36) == 15
-@assert parse_int(Int32,"Z",36) == 35
-@assert parse_int(Int32,"z",36) == 35
+@test is(parseint(Int32,"0",36),int32(0))
+@test is(parseint(Int32,"1",36),int32(1))
+@test is(parseint(Int32,"9",36),int32(9))
+@test is(parseint(Int32,"A",36),int32(10))
+@test is(parseint(Int32,"a",36),int32(10))
+@test is(parseint(Int32,"B",36),int32(11))
+@test is(parseint(Int32,"b",36),int32(11))
+@test is(parseint(Int32,"F",36),int32(15))
+@test is(parseint(Int32,"f",36),int32(15))
+@test is(parseint(Int32,"Z",36),int32(35))
+@test is(parseint(Int32,"z",36),int32(35))
 
-@assert parse_int("0") == 0
-@assert parse_int("-0") == 0
-@assert parse_int("1") == 1
-@assert parse_int("-1") == -1
-@assert parse_int("9") == 9
-@assert parse_int("-9") == -9
-@assert parse_int("10") == 10
-@assert parse_int("-10") == -10
-@assert parse_int(Int64,"3830974272") == 3830974272
-@assert parse_int(Int64,"-3830974272") == -3830974272
+@test parseint("0") == 0
+@test parseint("-0") == 0
+@test parseint("1") == 1
+@test parseint("-1") == -1
+@test parseint("9") == 9
+@test parseint("-9") == -9
+@test parseint("10") == 10
+@test parseint("-10") == -10
+@test parseint(Int64,"3830974272") == 3830974272
+@test parseint(Int64,"-3830974272") == -3830974272
+@test parseint('3') == 3
+@test parseint('3', 8) == 3
 
-@assert parse_bin("0") == 0
-@assert parse_bin("-0") == 0
-@assert parse_bin("1") == 1
-@assert parse_bin("-1") == -1
-@assert parse_bin("10") == 2
-@assert parse_bin("-10") == -2
-@assert parse_bin("11") == 3
-@assert parse_bin("-11") == -3
-@assert parse_bin("1111000011110000111100001111") == 252645135
-@assert parse_bin("-1111000011110000111100001111") == -252645135
+parsebin(s) = parseint(s,2)
+parseoct(s) = parseint(s,8)
+parsehex(s) = parseint(s,16)
 
-@assert parse_oct("0") == 0
-@assert parse_oct("-0") == 0
-@assert parse_oct("1") == 1
-@assert parse_oct("-1") == -1
-@assert parse_oct("7") == 7
-@assert parse_oct("-7") == -7
-@assert parse_oct("10") == 8
-@assert parse_oct("-10") == -8
-@assert parse_oct("11") == 9
-@assert parse_oct("-11") == -9
-@assert parse_oct("72") == 58
-@assert parse_oct("-72") == -58
-@assert parse_oct("3172207320") == 434704080
-@assert parse_oct("-3172207320") == -434704080
+@test parsebin("0") == 0
+@test parsebin("-0") == 0
+@test parsebin("1") == 1
+@test parsebin("-1") == -1
+@test parsebin("10") == 2
+@test parsebin("-10") == -2
+@test parsebin("11") == 3
+@test parsebin("-11") == -3
+@test parsebin("1111000011110000111100001111") == 252645135
+@test parsebin("-1111000011110000111100001111") == -252645135
 
-@assert parse_hex("0") == 0
-@assert parse_hex("-0") == 0
-@assert parse_hex("1") == 1
-@assert parse_hex("-1") == -1
-@assert parse_hex("9") == 9
-@assert parse_hex("-9") == -9
-@assert parse_hex("a") == 10
-@assert parse_hex("-a") == -10
-@assert parse_hex("f") == 15
-@assert parse_hex("-f") == -15
-@assert parse_hex("10") == 16
-@assert parse_hex("-10") == -16
-@assert parse_hex("0BADF00D") == 195948557
-@assert parse_hex("-0BADF00D") == -195948557
-@assert parse_int(Int64,"BADCAB1E",16) == 3135023902
-@assert parse_int(Int64,"-BADCAB1E",16) == -3135023902
-@assert parse_int(Int64,"CafeBabe",16) == 3405691582
-@assert parse_int(Int64,"-CafeBabe",16) == -3405691582
-@assert parse_int(Int64,"DeadBeef",16) == 3735928559
-@assert parse_int(Int64,"-DeadBeef",16) == -3735928559
+@test parseoct("0") == 0
+@test parseoct("-0") == 0
+@test parseoct("1") == 1
+@test parseoct("-1") == -1
+@test parseoct("7") == 7
+@test parseoct("-7") == -7
+@test parseoct("10") == 8
+@test parseoct("-10") == -8
+@test parseoct("11") == 9
+@test parseoct("-11") == -9
+@test parseoct("72") == 58
+@test parseoct("-72") == -58
+@test parseoct("3172207320") == 434704080
+@test parseoct("-3172207320") == -434704080
 
-@assert parse_int("2\n") == 2
-@assert parse_int("   2 \n ") == 2
-@assert parse_int(" 2 ") == 2
-@assert parse_int("2 ") == 2
-@assert parse_int(" 2") == 2
-@assert parse_int("+2\n") == 2
-@assert parse_int("-2") == -2
-@assert_fails parse_int("   2 \n 0")
-@assert_fails parse_int("2x")
-@assert_fails parse_int("-")
+@test parsehex("0") == 0
+@test parsehex("-0") == 0
+@test parsehex("1") == 1
+@test parsehex("-1") == -1
+@test parsehex("9") == 9
+@test parsehex("-9") == -9
+@test parsehex("a") == 10
+@test parsehex("-a") == -10
+@test parsehex("f") == 15
+@test parsehex("-f") == -15
+@test parsehex("10") == 16
+@test parsehex("-10") == -16
+@test parsehex("0BADF00D") == 195948557
+@test parsehex("-0BADF00D") == -195948557
+@test parseint(Int64,"BADCAB1E",16) == 3135023902
+@test parseint(Int64,"-BADCAB1E",16) == -3135023902
+@test parseint(Int64,"CafeBabe",16) == 3405691582
+@test parseint(Int64,"-CafeBabe",16) == -3405691582
+@test parseint(Int64,"DeadBeef",16) == 3735928559
+@test parseint(Int64,"-DeadBeef",16) == -3735928559
+
+@test parseint("2\n") == 2
+@test parseint("   2 \n ") == 2
+@test parseint(" 2 ") == 2
+@test parseint("2 ") == 2
+@test parseint(" 2") == 2
+@test parseint("+2\n") == 2
+@test parseint("-2") == -2
+@test_throws parseint("   2 \n 0")
+@test_throws parseint("2x")
+@test_throws parseint("-")
+
+@test parseint("1234") == 1234
+@test parseint("0x1234") == 0x1234
+@test parseint("0o1234") == 0o1234
+@test parseint("0b1011") == 0b1011
+@test parseint("-1234") == -1234
+@test parseint("-0x1234") == -int(0x1234)
+@test parseint("-0o1234") == -int(0o1234)
+@test parseint("-0b1011") == -int(0b1011)
+
+for T in (Int8,Uint8,Int16,Uint16,Int32,Uint32,Int64,Uint64)#,Int128,Uint128) ## FIXME: #4905
+    @test parseint(T,string(typemin(T))) == typemin(T)
+    @test parseint(T,string(typemax(T))) == typemax(T)
+    @test_throws parseint(T,string(big(typemin(T))-1))
+    @test_throws parseint(T,string(big(typemax(T))+1))
+end
 
 # string manipulation
-@assert strip("\t  hi   \n") == "hi"
+@test strip("\t  hi   \n") == "hi"
 
 # some test strings
 astr = "Hello, world.\n"
 u8str = "∀ ε > 0, ∃ δ > 0: |x-y| < δ ⇒ |f(x)-f(y)| < ε"
 
-# ascii strchr
-for str in {astr, GenericString(astr)}
-    @assert strchr(str, 'x') == 0
-    @assert strchr(str, '\0') == 0
-    @assert strchr(str, '\u80') == 0
-    @assert strchr(str, '∀') == 0
-    @assert strchr(str, 'H') == 1
-    @assert strchr(str, 'l') == 3
-    @assert strchr(str, 'l', 4) == 4
-    @assert strchr(str, 'l', 5) == 11
-    @assert strchr(str, 'l', 12) == 0
-    @assert strchr(str, ',') == 6
-    @assert strchr(str, ',', 7) == 0
-    @assert strchr(str, '\n') == 14
+# ascii search
+for str in {astr, Base.GenericString(astr)}
+    @test search(str, 'x') == 0
+    @test search(str, '\0') == 0
+    @test search(str, '\u80') == 0
+    @test search(str, '∀') == 0
+    @test search(str, 'H') == 1
+    @test search(str, 'l') == 3
+    @test search(str, 'l', 4) == 4
+    @test search(str, 'l', 5) == 11
+    @test search(str, 'l', 12) == 0
+    @test search(str, ',') == 6
+    @test search(str, ',', 7) == 0
+    @test search(str, '\n') == 14
+    @test search(str, '\n', 15) == 0
 end
 
-# utf-8 strchr
-for str in {u8str, GenericString(u8str)}
-    @assert strchr(str, 'z') == 0
-    @assert strchr(str, '\0') == 0
-    @assert strchr(str, '\u80') == 0
-    @assert strchr(str, '∄') == 0
-    @assert strchr(str, '∀') == 1
-    @assert strchr(str, '∀', 2) == 0
-    @assert strchr(str, '∃') == 13
-    @assert strchr(str, '∃', 14) == 0
-    @assert strchr(str, 'x') == 26
-    @assert strchr(str, 'x', 27) == 43
-    @assert strchr(str, 'x', 44) == 0
-    @assert strchr(str, 'δ') == 17
-    @assert strchr(str, 'δ', 18) == 33
-    @assert strchr(str, 'δ', 34) == 0
-    @assert strchr(str, 'ε') == 5
-    @assert strchr(str, 'ε', 6) == 54
-    @assert strchr(str, 'ε', 55) == 0
+# ascii rsearch
+for str in {astr}
+    @test rsearch(str, 'x') == 0
+    @test rsearch(str, '\0') == 0
+    @test rsearch(str, '\u80') == 0
+    @test rsearch(str, '∀') == 0
+    @test rsearch(str, 'H') == 1
+    @test rsearch(str, 'H', 0) == 0
+    @test rsearch(str, 'l') == 11
+    @test rsearch(str, 'l', 5) == 4
+    @test rsearch(str, 'l', 4) == 4
+    @test rsearch(str, 'l', 3) == 3
+    @test rsearch(str, 'l', 2) == 0
+    @test rsearch(str, ',') == 6
+    @test rsearch(str, ',', 5) == 0
+    @test rsearch(str, '\n') == 14
 end
 
-# string search with a char
-@assert search(astr, 'x')[1] == 0
-@assert search(astr, 'H') == (1,2)
-@assert search(astr, 'H', 2)[1] == 0
-@assert search(astr, 'l') == (3,4)
-@assert search(astr, 'l', 4) == (4,5)
-@assert search(astr, 'l', 5) == (11,12)
-@assert search(astr, 'l', 12)[1] == 0
-@assert search(astr, '\n') == (14,15)
-@assert search(astr, '\n', 15)[1] == 0
-@assert search(u8str, 'z')[1] == 0
-@assert search(u8str, '∄')[1] == 0
-@assert search(u8str, '∀') == (1,4)
-@assert search(u8str, '∀', 4)[1] == 0
-@assert search(u8str, '∃') == (13,16)
-@assert search(u8str, '∃', 16)[1] == 0
-@assert search(u8str, 'x') == (26,27)
-@assert search(u8str, 'x', 27) == (43,44)
-@assert search(u8str, 'x', 44)[1] == 0
-@assert search(u8str, 'ε') == (5,7)
-@assert search(u8str, 'ε', 7) == (54,56)
-@assert search(u8str, 'ε', 56)[1] == 0
+# utf-8 search
+for str in {u8str, Base.GenericString(u8str)}
+    @test search(str, 'z') == 0
+    @test search(str, '\0') == 0
+    @test search(str, '\u80') == 0
+    @test search(str, '∄') == 0
+    @test search(str, '∀') == 1
+    @test search(str, '∀', 2) == 0
+    @test search(str, '∃') == 13
+    @test search(str, '∃', 14) == 0
+    @test search(str, 'x') == 26
+    @test search(str, 'x', 27) == 43
+    @test search(str, 'x', 44) == 0
+    @test search(str, 'δ') == 17
+    @test search(str, 'δ', 18) == 33
+    @test search(str, 'δ', 34) == 0
+    @test search(str, 'ε') == 5
+    @test search(str, 'ε', 6) == 54
+    @test search(str, 'ε', 55) == 0
+end
+
+# utf-8 rsearch
+for str in {u8str}
+    @test rsearch(str, 'z') == 0
+    @test rsearch(str, '\0') == 0
+    @test rsearch(str, '\u80') == 0
+    @test rsearch(str, '∄') == 0
+    @test rsearch(str, '∀') == 1
+    @test rsearch(str, '∀', 0) == 0
+    @test rsearch(str, '∃') == 13
+    @test rsearch(str, '∃', 14) == 13
+    @test rsearch(str, '∃', 13) == 13
+    @test rsearch(str, '∃', 12) == 0
+    @test rsearch(str, 'x') == 43
+    @test rsearch(str, 'x', 42) == 26
+    @test rsearch(str, 'x', 25) == 0
+    @test rsearch(str, 'δ') == 33
+    @test rsearch(str, 'δ', 32) == 17
+    @test rsearch(str, 'δ', 16) == 0
+    @test rsearch(str, 'ε') == 54
+    @test rsearch(str, 'ε', 53) == 5
+    @test rsearch(str, 'ε', 4) == 0
+end
 
 # string search with a single-char string
-@assert search(astr, "x")[1] == 0
-@assert search(astr, "H") == (1,2)
-@assert search(astr, "H", 2)[1] == 0
-@assert search(astr, "l") == (3,4)
-@assert search(astr, "l", 4) == (4,5)
-@assert search(astr, "l", 5) == (11,12)
-@assert search(astr, "l", 12)[1] == 0
-@assert search(astr, "\n") == (14,15)
-@assert search(astr, "\n", 15)[1] == 0
-@assert search(u8str, "z")[1] == 0
-@assert search(u8str, "∄")[1] == 0
-@assert search(u8str, "∀") == (1,4)
-@assert search(u8str, "∀", 4)[1] == 0
-@assert search(u8str, "∃") == (13,16)
-@assert search(u8str, "∃", 16)[1] == 0
-@assert search(u8str, "x") == (26,27)
-@assert search(u8str, "x", 27) == (43,44)
-@assert search(u8str, "x", 44)[1] == 0
-@assert search(u8str, "ε") == (5,7)
-@assert search(u8str, "ε", 7) == (54,56)
-@assert search(u8str, "ε", 56)[1] == 0
+@test search(astr, "x") == 0:-1
+@test search(astr, "H") == 1:1
+@test search(astr, "H", 2) == 0:-1
+@test search(astr, "l") == 3:3
+@test search(astr, "l", 4) == 4:4
+@test search(astr, "l", 5) == 11:11
+@test search(astr, "l", 12) == 0:-1
+@test search(astr, "\n") == 14:14
+@test search(astr, "\n", 15) == 0:-1
+
+@test search(u8str, "z") == 0:-1
+@test search(u8str, "∄") == 0:-1
+@test search(u8str, "∀") == 1:1
+@test search(u8str, "∀", 4) == 0:-1
+@test search(u8str, "∃") == 13:13
+@test search(u8str, "∃", 16) == 0:-1
+@test search(u8str, "x") == 26:26
+@test search(u8str, "x", 27) == 43:43
+@test search(u8str, "x", 44) == 0:-1
+@test search(u8str, "ε") == 5:5
+@test search(u8str, "ε", 7) == 54:54
+@test search(u8str, "ε", 56) == 0:-1
+
+# string rsearch with a single-char string
+@test rsearch(astr, "x") == 0:-1
+@test rsearch(astr, "H") == 1:1
+@test rsearch(astr, "H", 2) == 1:1
+@test rsearch(astr, "H", 0) == 0:-1
+@test rsearch(astr, "l") == 11:11
+@test rsearch(astr, "l", 10) == 4:4
+@test rsearch(astr, "l", 4) == 4:4
+@test rsearch(astr, "l", 3) == 3:3
+@test rsearch(astr, "l", 2) == 0:-1
+@test rsearch(astr, "\n") == 14:14
+@test rsearch(astr, "\n", 13) == 0:-1
+
+@test rsearch(u8str, "z") == 0:-1
+@test rsearch(u8str, "∄") == 0:-1
+@test rsearch(u8str, "∀") == 1:1
+@test rsearch(u8str, "∀", 0) == 0:-1
+#TODO: setting the limit in the middle of a wide char
+#      makes search fail but rsearch succeed.
+#      Should rsearch fail as well?
+#@test rsearch(u8str, "∀", 2) == 0:-1 # gives 1:3
+@test rsearch(u8str, "∃") == 13:13
+@test rsearch(u8str, "∃", 12) == 0:-1
+@test rsearch(u8str, "x") == 43:43
+@test rsearch(u8str, "x", 42) == 26:26
+@test rsearch(u8str, "x", 25) == 0:-1
+@test rsearch(u8str, "ε") == 54:54
+@test rsearch(u8str, "ε", 53) == 5:5
+@test rsearch(u8str, "ε", 4) == 0:-1
 
 # string search with a single-char regex
-@assert search(astr, r"x")[1] == 0
-@assert search(astr, r"H") == (1,2)
-@assert search(astr, r"H", 2)[1] == 0
-@assert search(astr, r"l") == (3,4)
-@assert search(astr, r"l", 4) == (4,5)
-@assert search(astr, r"l", 5) == (11,12)
-@assert search(astr, r"l", 12)[1] == 0
-@assert search(astr, r"\n") == (14,15)
-@assert search(astr, r"\n", 15)[1] == 0
-@assert search(u8str, r"z")[1] == 0
-@assert search(u8str, r"∄")[1] == 0
-@assert search(u8str, r"∀") == (1,4)
-@assert search(u8str, r"∀", 4)[1] == 0
-@assert search(u8str, r"∃") == (13,16)
-@assert search(u8str, r"∃", 16)[1] == 0
-@assert search(u8str, r"x") == (26,27)
-@assert search(u8str, r"x", 27) == (43,44)
-@assert search(u8str, r"x", 44)[1] == 0
-@assert search(u8str, r"ε") == (5,7)
-@assert search(u8str, r"ε", 7) == (54,56)
-@assert search(u8str, r"ε", 56)[1] == 0
-for i = 1:length(astr)
-    @assert search(astr, r"."s, i) == (i,i+1)
+@test search(astr, r"x") == 0:-1
+@test search(astr, r"H") == 1:1
+@test search(astr, r"H", 2) == 0:-1
+@test search(astr, r"l") == 3:3
+@test search(astr, r"l", 4) == 4:4
+@test search(astr, r"l", 5) == 11:11
+@test search(astr, r"l", 12) == 0:-1
+@test search(astr, r"\n") == 14:14
+@test search(astr, r"\n", 15) == 0:-1
+@test search(u8str, r"z") == 0:-1
+@test search(u8str, r"∄") == 0:-1
+@test search(u8str, r"∀") == 1:1
+@test search(u8str, r"∀", 4) == 0:-1
+@test search(u8str, r"∀") == search(u8str, r"\u2200")
+@test search(u8str, r"∀", 4) == search(u8str, r"\u2200", 4)
+@test search(u8str, r"∃") == 13:13
+@test search(u8str, r"∃", 16) == 0:-1
+@test search(u8str, r"x") == 26:26
+@test search(u8str, r"x", 27) == 43:43
+@test search(u8str, r"x", 44) == 0:-1
+@test search(u8str, r"ε") == 5:5
+@test search(u8str, r"ε", 7) == 54:54
+@test search(u8str, r"ε", 56) == 0:-1
+for i = 1:endof(astr)
+    @test search(astr, r"."s, i) == i:i
 end
-for i = 1:length(u8str)
-    # TODO: should regex search fast-forward invalid indices?
+for i = 1:endof(u8str)
     if isvalid(u8str,i)
-        @assert search(u8str, r"."s, i) == (i,nextind(u8str,i))
+        @test search(u8str, r"."s, i) == i:i
     end
 end
 
 # string search with a zero-char string
-for i = 1:length(astr)
-    @assert search(astr, "", i) == (i,i)
+for i = 1:endof(astr)
+    @test search(astr, "", i) == i:i-1
 end
-for i = 1:length(u8str)
-    @assert search(u8str, "", i) == (i,i)
+for i = 1:endof(u8str)
+    @test search(u8str, "", i) == i:i-1
 end
+@test search("", "") == 1:0
+
+# string rsearch with a zero-char string
+for i = 1:endof(astr)
+    @test rsearch(astr, "", i) == i:i-1
+end
+for i = 1:endof(u8str)
+    @test rsearch(u8str, "", i) == i:i-1
+end
+@test rsearch("", "") == 1:0
 
 # string search with a zero-char regex
-for i = 1:length(astr)
-    @assert search(astr, r"", i) == (i,i)
+for i = 1:endof(astr)
+    @test search(astr, r"", i) == i:i-1
 end
-for i = 1:length(u8str)
+for i = 1:endof(u8str)
     # TODO: should regex search fast-forward invalid indices?
     if isvalid(u8str,i)
-        @assert search(u8str, r""s, i) == (i,i)
+        @test search(u8str, r""s, i) == i:i-1
     end
 end
 
 # string search with a two-char string literal
-@assert search("foo,bar,baz", "xx")[1] == 0
-@assert search("foo,bar,baz", "fo") == (1,3)
-@assert search("foo,bar,baz", "fo", 3)[1] == 0
-@assert search("foo,bar,baz", "oo") == (2,4)
-@assert search("foo,bar,baz", "oo", 4)[1] == 0
-@assert search("foo,bar,baz", "o,") == (3,5)
-@assert search("foo,bar,baz", "o,", 5)[1] == 0
-@assert search("foo,bar,baz", ",b") == (4,6)
-@assert search("foo,bar,baz", ",b", 6) == (8,10)
-@assert search("foo,bar,baz", ",b", 10)[1] == 0
-@assert search("foo,bar,baz", "az") == (10,12)
-@assert search("foo,bar,baz", "az", 12)[1] == 0
+@test search("foo,bar,baz", "xx") == 0:-1
+@test search("foo,bar,baz", "fo") == 1:2
+@test search("foo,bar,baz", "fo", 3) == 0:-1
+@test search("foo,bar,baz", "oo") == 2:3
+@test search("foo,bar,baz", "oo", 4) == 0:-1
+@test search("foo,bar,baz", "o,") == 3:4
+@test search("foo,bar,baz", "o,", 5) == 0:-1
+@test search("foo,bar,baz", ",b") == 4:5
+@test search("foo,bar,baz", ",b", 6) == 8:9
+@test search("foo,bar,baz", ",b", 10) == 0:-1
+@test search("foo,bar,baz", "az") == 10:11
+@test search("foo,bar,baz", "az", 12) == 0:-1
+
+# string rsearch with a two-char string literal
+@test rsearch("foo,bar,baz", "xx") == 0:-1
+@test rsearch("foo,bar,baz", "fo") == 1:2
+@test rsearch("foo,bar,baz", "fo", 1) == 0:-1
+@test rsearch("foo,bar,baz", "oo") == 2:3
+@test rsearch("foo,bar,baz", "oo", 2) == 0:-1
+@test rsearch("foo,bar,baz", "o,") == 3:4
+@test rsearch("foo,bar,baz", "o,", 1) == 0:-1
+@test rsearch("foo,bar,baz", ",b") == 8:9
+@test rsearch("foo,bar,baz", ",b", 6) == 4:5
+@test rsearch("foo,bar,baz", ",b", 3) == 0:-1
+@test rsearch("foo,bar,baz", "az") == 10:11
+@test rsearch("foo,bar,baz", "az", 10) == 0:-1
+
+# array rsearch
+@test rsearch(Uint8[1,2,3],Uint8[2,3],3) == 2:3
+@test rsearch(Uint8[1,2,3],Uint8[2,3],1) == 0:-1
 
 # string search with a two-char regex
-@assert search("foo,bar,baz", r"xx")[1] == 0
-@assert search("foo,bar,baz", r"fo") == (1,3)
-@assert search("foo,bar,baz", r"fo", 3)[1] == 0
-@assert search("foo,bar,baz", r"oo") == (2,4)
-@assert search("foo,bar,baz", r"oo", 4)[1] == 0
-@assert search("foo,bar,baz", r"o,") == (3,5)
-@assert search("foo,bar,baz", r"o,", 5)[1] == 0
-@assert search("foo,bar,baz", r",b") == (4,6)
-@assert search("foo,bar,baz", r",b", 6) == (8,10)
-@assert search("foo,bar,baz", r",b", 10)[1] == 0
-@assert search("foo,bar,baz", r"az") == (10,12)
-@assert search("foo,bar,baz", r"az", 12)[1] == 0
+@test search("foo,bar,baz", r"xx") == 0:-1
+@test search("foo,bar,baz", r"fo") == 1:2
+@test search("foo,bar,baz", r"fo", 3) == 0:-1
+@test search("foo,bar,baz", r"oo") == 2:3
+@test search("foo,bar,baz", r"oo", 4) == 0:-1
+@test search("foo,bar,baz", r"o,") == 3:4
+@test search("foo,bar,baz", r"o,", 5) == 0:-1
+@test search("foo,bar,baz", r",b") == 4:5
+@test search("foo,bar,baz", r",b", 6) == 8:9
+@test search("foo,bar,baz", r",b", 10) == 0:-1
+@test search("foo,bar,baz", r"az") == 10:11
+@test search("foo,bar,baz", r"az", 12) == 0:-1
 
 # split
-@assert isequal(split("foo,bar,baz", 'x'), ["foo,bar,baz"])
-@assert isequal(split("foo,bar,baz", ','), ["foo","bar","baz"])
-@assert isequal(split("foo,bar,baz", ","), ["foo","bar","baz"])
-@assert isequal(split("foo,bar,baz", r","), ["foo","bar","baz"])
-@assert isequal(split("foo,bar,baz", ',', 0), ["foo","bar","baz"])
-@assert isequal(split("foo,bar,baz", ',', 1), ["foo,bar,baz"])
-@assert isequal(split("foo,bar,baz", ',', 2), ["foo","bar,baz"])
-@assert isequal(split("foo,bar,baz", ',', 3), ["foo","bar","baz"])
-@assert isequal(split("foo,bar", "o,b"), ["fo","ar"])
+@test isequal(split("foo,bar,baz", 'x'), ["foo,bar,baz"])
+@test isequal(split("foo,bar,baz", ','), ["foo","bar","baz"])
+@test isequal(split("foo,bar,baz", ","), ["foo","bar","baz"])
+@test isequal(split("foo,bar,baz", r","), ["foo","bar","baz"])
+@test isequal(split("foo,bar,baz", ',', 0), ["foo","bar","baz"])
+@test isequal(split("foo,bar,baz", ',', 1), ["foo,bar,baz"])
+@test isequal(split("foo,bar,baz", ',', 2), ["foo","bar,baz"])
+@test isequal(split("foo,bar,baz", ',', 3), ["foo","bar","baz"])
+@test isequal(split("foo,bar", "o,b"), ["fo","ar"])
 
-@assert isequal(split("", ','), [""])
-@assert isequal(split(",", ','), ["",""])
-@assert isequal(split(",,", ','), ["","",""])
-@assert isequal(split("", ',', false), [])
-@assert isequal(split(",", ',', false), [])
-@assert isequal(split(",,", ',', false), [])
+@test isequal(split("", ','), [""])
+@test isequal(split(",", ','), ["",""])
+@test isequal(split(",,", ','), ["","",""])
+@test isequal(split("", ',', false), [])
+@test isequal(split(",", ',', false), [])
+@test isequal(split(",,", ',', false), [])
 
-@assert isequal(split("a b c"), ["a","b","c"])
-@assert isequal(split("a  b \t c\n"), ["a","b","c"])
+@test isequal(split("a b c"), ["a","b","c"])
+@test isequal(split("a  b \t c\n"), ["a","b","c"])
+
+@test isequal(rsplit("foo,bar,baz", 'x'), ["foo,bar,baz"])
+@test isequal(rsplit("foo,bar,baz", ','), ["foo","bar","baz"])
+@test isequal(rsplit("foo,bar,baz", ","), ["foo","bar","baz"])
+@test isequal(rsplit("foo,bar,baz", ',', 0), ["foo","bar","baz"])
+@test isequal(rsplit("foo,bar,baz", ',', 1), ["foo,bar,baz"])
+@test isequal(rsplit("foo,bar,baz", ',', 2), ["foo,bar","baz"])
+@test isequal(rsplit("foo,bar,baz", ',', 3), ["foo","bar","baz"])
+@test isequal(rsplit("foo,bar", "o,b"), ["fo","ar"])
+
+@test isequal(rsplit("", ','), [""])
+@test isequal(rsplit(",", ','), ["",""])
+@test isequal(rsplit(",,", ','), ["","",""])
+@test isequal(rsplit(",,", ',', 2), [",",""])
+@test isequal(rsplit("", ',', false), [])
+@test isequal(rsplit(",", ',', false), [])
+@test isequal(rsplit(",,", ',', false), [])
+
+#@test isequal(rsplit("a b c"), ["a","b","c"])
+#@test isequal(rsplit("a  b \t c\n"), ["a","b","c"])
 
 let str = "a.:.ba..:..cba.:.:.dcba.:."
-@assert isequal(split(str, ".:."), ["a","ba.",".cba",":.dcba",""])
-@assert isequal(split(str, ".:.", false), ["a","ba.",".cba",":.dcba"])
-@assert isequal(split(str, ".:."), ["a","ba.",".cba",":.dcba",""])
-@assert isequal(split(str, r"\.(:\.)+"), ["a","ba.",".cba","dcba",""])
-@assert isequal(split(str, r"\.(:\.)+", false), ["a","ba.",".cba","dcba"])
-@assert isequal(split(str, r"\.+:\.+"), ["a","ba","cba",":.dcba",""])
-@assert isequal(split(str, r"\.+:\.+", false), ["a","ba","cba",":.dcba"])
+@test isequal(split(str, ".:."), ["a","ba.",".cba",":.dcba",""])
+@test isequal(split(str, ".:.", false), ["a","ba.",".cba",":.dcba"])
+@test isequal(split(str, ".:."), ["a","ba.",".cba",":.dcba",""])
+@test isequal(split(str, r"\.(:\.)+"), ["a","ba.",".cba","dcba",""])
+@test isequal(split(str, r"\.(:\.)+", false), ["a","ba.",".cba","dcba"])
+@test isequal(split(str, r"\.+:\.+"), ["a","ba","cba",":.dcba",""])
+@test isequal(split(str, r"\.+:\.+", false), ["a","ba","cba",":.dcba"])
+
+@test isequal(rsplit(str, ".:."), ["a","ba.",".cba.:","dcba",""])
+@test isequal(rsplit(str, ".:.", false), ["a","ba.",".cba.:","dcba"])
+@test isequal(rsplit(str, ".:.", 2), ["a.:.ba..:..cba.:.:.dcba", ""])
+@test isequal(rsplit(str, ".:.", 3), ["a.:.ba..:..cba.:", "dcba", ""])
+@test isequal(rsplit(str, ".:.", 4), ["a.:.ba.", ".cba.:", "dcba", ""])
+@test isequal(rsplit(str, ".:.", 5), ["a", "ba.", ".cba.:", "dcba", ""])
+@test isequal(rsplit(str, ".:.", 6), ["a", "ba.", ".cba.:", "dcba", ""])
 end
 
 # zero-width splits
-@assert isequal(split("", ""), [""])
-@assert isequal(split("", r""), [""])
-@assert isequal(split("abc", ""), ["a","b","c"])
-@assert isequal(split("abc", r""), ["a","b","c"])
-@assert isequal(split("abcd", r"b?"), ["a","c","d"])
-@assert isequal(split("abcd", r"b*"), ["a","c","d"])
-@assert isequal(split("abcd", r"b+"), ["a","cd"])
-@assert isequal(split("abcd", r"b?c?"), ["a","d"])
-@assert isequal(split("abcd", r"[bc]?"), ["a","","d"])
-@assert isequal(split("abcd", r"a*"), ["","b","c","d"])
-@assert isequal(split("abcd", r"a+"), ["","bcd"])
-@assert isequal(split("abcd", r"d*"), ["a","b","c",""])
-@assert isequal(split("abcd", r"d+"), ["abc",""])
-@assert isequal(split("abcd", r"[ad]?"), ["","b","c",""])
+@test isequal(rsplit("", ""), [""])
+
+@test isequal(split("", ""), [""])
+@test isequal(split("", r""), [""])
+@test isequal(split("abc", ""), ["a","b","c"])
+@test isequal(split("abc", r""), ["a","b","c"])
+@test isequal(split("abcd", r"b?"), ["a","c","d"])
+@test isequal(split("abcd", r"b*"), ["a","c","d"])
+@test isequal(split("abcd", r"b+"), ["a","cd"])
+@test isequal(split("abcd", r"b?c?"), ["a","d"])
+@test isequal(split("abcd", r"[bc]?"), ["a","","d"])
+@test isequal(split("abcd", r"a*"), ["","b","c","d"])
+@test isequal(split("abcd", r"a+"), ["","bcd"])
+@test isequal(split("abcd", r"d*"), ["a","b","c",""])
+@test isequal(split("abcd", r"d+"), ["abc",""])
+@test isequal(split("abcd", r"[ad]?"), ["","b","c",""])
 
 # replace
-@assert replace("foobar", 'o', '0') == "f00bar"
-@assert replace("foobar", 'o', '0', 1) == "f0obar"
-@assert replace("foobar", 'o', "") == "fbar"
-@assert replace("foobar", 'o', "", 1) == "fobar"
-@assert replace("foobar", 'f', 'F') == "Foobar"
-@assert replace("foobar", 'r', 'R') == "foobaR"
+@test replace("foobar", 'o', '0') == "f00bar"
+@test replace("foobar", 'o', '0', 1) == "f0obar"
+@test replace("foobar", 'o', "") == "fbar"
+@test replace("foobar", 'o', "", 1) == "fobar"
+@test replace("foobar", 'f', 'F') == "Foobar"
+@test replace("foobar", 'r', 'R') == "foobaR"
 
-@assert replace("", "", "") == ""
-@assert replace("", "", "x") == "x"
-@assert replace("", "x", "y") == ""
+@test replace("foofoofoo", "foo", "bar") == "barbarbar"
+@test replace("foobarfoo", "foo", "baz") == "bazbarbaz"
+@test replace("barfoofoo", "foo", "baz") == "barbazbaz"
 
-@assert replace("abcd", "", "^") == "^a^b^c^d^"
-@assert replace("abcd", "b", "^") == "a^cd"
-@assert replace("abcd", r"b?", "^") == "^a^c^d^"
-@assert replace("abcd", r"b+", "^") == "a^cd"
-@assert replace("abcd", r"b?c?", "^") == "^a^d^"
-@assert replace("abcd", r"[bc]?", "^") == "^a^^d^"
+@test replace("", "", "") == ""
+@test replace("", "", "x") == "x"
+@test replace("", "x", "y") == ""
 
-# {begins,ends}_with
-@assert begins_with("abcd", 'a')
-@assert begins_with("abcd", "a")
-@assert begins_with("abcd", "ab")
-@assert !begins_with("ab", "abcd")
-@assert !begins_with("abcd", "bc")
-@assert ends_with("abcd", 'd')
-@assert ends_with("abcd", "d")
-@assert ends_with("abcd", "cd")
-@assert !ends_with("abcd", "dc")
-@assert !ends_with("cd", "abcd")
+@test replace("abcd", "", "^") == "^a^b^c^d^"
+@test replace("abcd", "b", "^") == "a^cd"
+@test replace("abcd", r"b?", "^") == "^a^c^d^"
+@test replace("abcd", r"b+", "^") == "a^cd"
+@test replace("abcd", r"b?c?", "^") == "^a^d^"
+@test replace("abcd", r"[bc]?", "^") == "^a^^d^"
+
+@test replace("foobarfoo", r"(fo|ba)", "xx") == "xxoxxrxxo"
+@test replace("foobarfoo", r"(foo|ba)", "bar") == "barbarrbar"
+
+@test replace("foobar", 'o', 'ø') == "føøbar"
+@test replace("foobar", 'o', 'ø', 1) == "føobar"
+@test replace("føøbar", 'ø', 'o') == "foobar"
+@test replace("føøbar", 'ø', 'o', 1) == "foøbar"
+@test replace("føøbar", 'ø', 'ö') == "fööbar"
+@test replace("føøbar", 'ø', 'ö', 1) == "föøbar"
+@test replace("føøbar", 'ø', "") == "fbar"
+@test replace("føøbar", 'ø', "", 1) == "føbar"
+@test replace("føøbar", 'f', 'F') == "Føøbar"
+@test replace("ḟøøbar", 'ḟ', 'F') == "Føøbar"
+@test replace("føøbar", 'f', 'Ḟ') == "Ḟøøbar"
+@test replace("ḟøøbar", 'ḟ', 'Ḟ') == "Ḟøøbar"
+@test replace("føøbar", 'r', 'R') == "føøbaR"
+@test replace("føøbaṙ", 'ṙ', 'R') == "føøbaR"
+@test replace("føøbar", 'r', 'Ṙ') == "føøbaṘ"
+@test replace("føøbaṙ", 'ṙ', 'Ṙ') == "føøbaṘ"
+
+@test replace("ḟøøḟøøḟøø", "ḟøø", "bar") == "barbarbar"
+@test replace("ḟøøbarḟøø", "ḟøø", "baz") == "bazbarbaz"
+@test replace("barḟøøḟøø", "ḟøø", "baz") == "barbazbaz"
+
+@test replace("foofoofoo", "foo", "ƀäṙ") == "ƀäṙƀäṙƀäṙ"
+@test replace("fooƀäṙfoo", "foo", "baz") == "bazƀäṙbaz"
+@test replace("ƀäṙfoofoo", "foo", "baz") == "ƀäṙbazbaz"
+
+@test replace("foofoofoo", "foo", "bar") == "barbarbar"
+@test replace("foobarfoo", "foo", "ƀäż") == "ƀäżbarƀäż"
+@test replace("barfoofoo", "foo", "ƀäż") == "barƀäżƀäż"
+
+@test replace("ḟøøḟøøḟøø", "ḟøø", "ƀäṙ") == "ƀäṙƀäṙƀäṙ"
+@test replace("ḟøøƀäṙḟøø", "ḟøø", "baz") == "bazƀäṙbaz"
+@test replace("ƀäṙḟøøḟøø", "ḟøø", "baz") == "ƀäṙbazbaz"
+
+@test replace("ḟøøḟøøḟøø", "ḟøø", "bar") == "barbarbar"
+@test replace("ḟøøbarḟøø", "ḟøø", "ƀäż") == "ƀäżbarƀäż"
+@test replace("barḟøøḟøø", "ḟøø", "ƀäż") == "barƀäżƀäż"
+
+@test replace("ḟøøḟøøḟøø", "ḟøø", "ƀäṙ") == "ƀäṙƀäṙƀäṙ"
+@test replace("ḟøøƀäṙḟøø", "ḟøø", "ƀäż") == "ƀäżƀäṙƀäż"
+@test replace("ƀäṙḟøøḟøø", "ḟøø", "ƀäż") == "ƀäṙƀäżƀäż"
+
+@test replace("", "", "ẍ") == "ẍ"
+@test replace("", "ẍ", "ÿ") == ""
+
+@test replace("äƀçđ", "", "π") == "πäπƀπçπđπ"
+@test replace("äƀçđ", "ƀ", "π") == "äπçđ"
+@test replace("äƀçđ", r"ƀ?", "π") == "πäπçπđπ"
+@test replace("äƀçđ", r"ƀ+", "π") == "äπçđ"
+@test replace("äƀçđ", r"ƀ?ç?", "π") == "πäπđπ"
+@test replace("äƀçđ", r"[ƀç]?", "π") == "πäππđπ"
+
+@test replace("foobarfoo", r"(fo|ba)", "ẍẍ") == "ẍẍoẍẍrẍẍo"
+
+@test replace("ḟøøbarḟøø", r"(ḟø|ba)", "xx") == "xxøxxrxxø"
+@test replace("ḟøøbarḟøø", r"(ḟøø|ba)", "bar") == "barbarrbar"
+
+@test replace("fooƀäṙfoo", r"(fo|ƀä)", "xx") == "xxoxxṙxxo"
+@test replace("fooƀäṙfoo", r"(foo|ƀä)", "ƀäṙ") == "ƀäṙƀäṙṙƀäṙ"
+
+@test replace("ḟøøƀäṙḟøø", r"(ḟø|ƀä)", "xx") == "xxøxxṙxxø"
+@test replace("ḟøøƀäṙḟøø", r"(ḟøø|ƀä)", "ƀäṙ") == "ƀäṙƀäṙṙƀäṙ"
+
+
+# {begins,ends}with
+@test beginswith("abcd", 'a')
+@test beginswith("abcd", "a")
+@test beginswith("abcd", "ab")
+@test !beginswith("ab", "abcd")
+@test !beginswith("abcd", "bc")
+@test endswith("abcd", 'd')
+@test endswith("abcd", "d")
+@test endswith("abcd", "cd")
+@test !endswith("abcd", "dc")
+@test !endswith("cd", "abcd")
 
 # RepStrings and SubStrings
 u8str2 = u8str^2
 len_u8str = length(u8str)
-slen_u8str = strlen(u8str)
+slen_u8str = length(u8str)
 len_u8str2 = length(u8str2)
-slen_u8str2 = strlen(u8str2)
+slen_u8str2 = length(u8str2)
 
-@assert len_u8str2 == 2 * len_u8str
-@assert slen_u8str2 == 2 * slen_u8str
+@test len_u8str2 == 2 * len_u8str
+@test slen_u8str2 == 2 * slen_u8str
 
 u8str2plain = utf8(u8str2)
 
@@ -483,14 +678,262 @@ for i1 = 1:length(u8str2)
     if !isvalid(u8str2, i1); continue; end
     for i2 = i1:length(u8str2)
         if !isvalid(u8str2, i2); continue; end
-        @assert length(u8str2[i1:i2]) == length(u8str2plain[i1:i2])
-        @assert strlen(u8str2[i1:i2]) == strlen(u8str2plain[i1:i2])
-        @assert u8str2[i1:i2] == u8str2plain[i1:i2]
+        @test length(u8str2[i1:i2]) == length(u8str2plain[i1:i2])
+        @test length(u8str2[i1:i2]) == length(u8str2plain[i1:i2])
+        @test u8str2[i1:i2] == u8str2plain[i1:i2]
     end
 end
+
+str = "aa\u2200\u2222bb"
+u = SubString(str, 3, 6)
+@test length(u)==2
+b = IOBuffer()
+write(b, u)
+@test takebuf_string(b) == "\u2200\u2222"
+
+str = "føøbar"
+u = SubString(str, 4, 3)
+@test length(u)==0
+b = IOBuffer()
+write(b, u)
+@test takebuf_string(b) == ""
+
+str = "føøbar"
+u = SubString(str, 10, 10)
+@test length(u)==0
+b = IOBuffer()
+write(b, u)
+@test takebuf_string(b) == ""
+
+@test replace("\u2202", '*', '\0') == "\u2202"
+
+# search and SubString (issue #5679)
+str = "Hello, world!"
+u = SubString(str, 1, 5)
+@test rsearch(u, "World") == 0:-1
+@test rsearch(u, 'z') == 0
+@test rsearch(u, "ll") == 3:4
+
+# quotes + interpolation (issue #455)
+@test "$("string")" == "string"
+arr = ["a","b","c"]
+@test "[$(join(arr, " - "))]" == "[a - b - c]"
 
 # string iteration, and issue #1454
 str = "é"
 str_a = [str...]
-@assert length(str_a)==1
-@assert str_a[1] == str[1]
+@test length(str_a)==1
+@test str_a[1] == str[1]
+
+str = "s\u2200"
+@test str[1:end] == str
+
+# triple-quote delimited strings
+@test """abc""" == "abc"
+@test """ab"c""" == "ab\"c"
+@test """ab""c""" == "ab\"\"c"
+@test """ab"\"c""" == "ab\"\"c"
+@test """abc\"""" == "abc\""
+n = 3
+@test """$n\n""" == "$n\n"
+@test """$(n)""" == "3"
+@test """$(2n)""" == "6"
+@test """$(n+4)""" == "7"
+@test """$("string")""" == "string"
+a = [3,1,2]
+@test """$(a[2])""" == "1"
+@test """$(a[3]+7)""" == "9"
+@test """$(ifloor(4.5))""" == "4"
+nl = "
+"
+@test """
+     a
+     b
+
+     c
+     """ == "a$(nl)b$(nl)$(nl)c$(nl)"
+@test """
+      """ == ""
+@test """x
+     a
+    """ == "x$(nl) a$(nl)"
+@test """
+     $n
+   """ == "  $n$(nl)"
+@test """
+      a
+     b
+       c""" == " a$(nl)b$(nl)  c"
+# note tab/space mixing
+@test """
+	a
+     b
+     """ == "   a$(nl)b$(nl)"
+@test """
+      a
+       """ == "a$(nl)"
+s = "   p"
+@test """
+      $s""" == "$s"
+@test """
+       $s
+      """ == " $s$(nl)"
+
+# bytes2hex and hex2bytes
+hex_str = "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"
+bin_val = hex2bytes(hex_str)
+
+@test div(length(hex_str), 2) == length(bin_val)
+@test hex_str == bytes2hex(bin_val)
+
+bin_val = hex2bytes("07bf")
+@test bin_val[1] == 7
+@test bin_val[2] == 191
+@test typeof(bin_val) == Array{Uint8, 1}
+@test length(bin_val) == 2
+
+# all valid hex chars
+@test "0123456789abcdefabcdef" == bytes2hex(hex2bytes("0123456789abcdefABCDEF"))
+
+# odd size
+@test_throws hex2bytes("0123456789abcdefABCDEF0")
+
+#non-hex characters
+@test_throws hex2bytes("0123456789abcdefABCDEFGH")
+
+# sizeof
+@test sizeof("abc") == 3
+@test sizeof("\u2222") == 3
+@test sizeof(SubString("abc\u2222def",4,4)) == 3
+@test sizeof(RopeString("abc","def")) == 6
+
+# issue #3597
+@test string(UTF32String(['T', 'e', 's', 't'])[1:1], "X") == "TX"
+
+# issue #3710
+@test prevind(SubString("{var}",2,4),4) == 3
+
+# printf
+# int
+@test (@sprintf "%d" typemax(Int64)) == "9223372036854775807"
+@test (@sprintf "%i" 42) == "42"
+@test (@sprintf "%u" 42) == "42"
+@test (@sprintf "Test: %i" 42) == "Test: 42"
+@test (@sprintf "%#x" 42) == "0x2a"
+@test (@sprintf "%#o" 42) == "052"
+@test (@sprintf "%X" 42) == "2A"
+@test (@sprintf "%X" 42) == "2A"
+@test (@sprintf "% i" 42) == " 42"
+@test (@sprintf "%+i" 42) == "+42"
+@test (@sprintf "%4i" 42) == "  42"
+@test (@sprintf "%-4i" 42) == "42  "
+# float
+@test (@sprintf "%7.2f" 1.2345) == "   1.23"
+@test (@sprintf "%-7.2f" 1.2345) == "1.23   "
+@test (@sprintf "%07.2f" 1.2345) == "0001.23"
+@test (@sprintf "%.0f" 1.2345) == "1"
+@test (@sprintf "%#.0f" 1.2345) == "1."
+# Inf / NaN handling
+@test (@sprintf "%f" Inf) == "Inf"
+@test (@sprintf "%f" NaN) == "NaN"
+# scientific notation
+@test (@sprintf "%.4e" 1.2345) == "1.2345e+00"
+@test (@sprintf "%.0e" 3e142) == "3e+142"
+@test (@sprintf "%#.0e" 3e142) == "3.e+142"
+# chars
+@test (@sprintf "%c" 65) == "A"
+@test (@sprintf "%c" 'A') == "A"
+@test (@sprintf "%c" 248) == "ø"
+@test (@sprintf "%c" 'ø') == "ø"
+# strings
+@test (@sprintf "%s" "test") == "test"
+@test (@sprintf "%s" "tést") == "tést"
+# reasonably complex
+@test (@sprintf "Test: %s%c%C%c%#-.0f." "t" 65 66 67 -42) == "Test: tABC-42.."
+
+# issue #4183
+@test split(SubString(ascii("x"), 2, 0), "y") == String[""]
+@test split(SubString(utf8("x"), 2, 0), "y") == String[""]
+
+# issue #4586
+@test rsplit(RevString("ailuj"),'l') == {"ju","ia"}
+@test_throws float64(RevString("64"))
+
+for T = (Uint8,Int8,Uint16,Int16,Uint32,Int32,Uint64,Int64,Uint128,Int128,BigInt),
+    b = 2:62, _ = 1:10
+    n = T != BigInt ? rand(T) : BigInt(rand(Int128))
+    @test parseint(T,base(b,n),b) == n
+end
+
+# normalize_string (Unicode normalization etc.):
+@test normalize_string("\u006e\u0303", :NFC) == "\u00f1"
+@test "\u006e\u0303" == normalize_string("\u00f1", :NFD)
+@test normalize_string("\ufb00", :NFC) != "ff"
+@test normalize_string("\ufb00", :NFKC) == "ff"
+@test normalize_string("\u006e\u0303\ufb00", :NFKC) == "\u00f1"*"ff"
+@test normalize_string("\u00f1\ufb00", :NFKD) == "\u006e\u0303"*"ff"
+@test normalize_string("\u006e\u0303", compose=true) == "\u00f1"
+@test "\u006e\u0303" == normalize_string("\u00f1", decompose=true)
+@test normalize_string("\u006e\u0303\u00b5",compat=true) == "\u00f1\u03bc"
+@test normalize_string("Σσς",casefold=true) == "σσσ"
+@test normalize_string("∕⁄", lump=true) == "//"
+@test normalize_string("\ua\n\r\r\ua", newline2lf=true) == "\ua\ua\ua\ua"
+@test normalize_string("\ua\n\r\r\ua", newline2ls=true) == "\u2028\u2028\u2028\u2028"
+@test normalize_string("\ua\n\r\r\ua", newline2ps=true) == "\u2029\u2029\u2029\u2029"
+@test normalize_string("\u00f1", stripmark=true) == "n"
+@test isempty(normalize_string("\u00ad", stripignore=true))
+@test normalize_string("\t\r", stripcc=true) == "  "
+@test normalize_string("\t\r", stripcc=true, newline2ls=true) == " \u2028"
+
+#Tests from Unicode SA#15, "Unicode normalization forms"
+#http://www.unicode.org/reports/tr15/
+ 
+#1. Canonical equivalence
+==(a::Array{Char},b::Array{Char}) =
+normalize_string(string(a...), :NFC)==normalize_string(string(b...), :NFC)
+@test ['C', '̧'] == ['Ç']
+@test ['q', '̇', '̣'] == ['q', '̣', '̇']
+@test ['가'] == ['ᄀ', 'ᅡ']
+@test ['Ω'] == ['Ω']
+ 
+#2. Compatibility Equivalence
+==(a::Array{Char},b::Array{Char}) =
+normalize_string(string(a...), :NFKC)==normalize_string(string(b...), :NFKC)
+@test ['ℌ'] == ['ℍ'] == ['H']
+@test ['ﻨ'] == ['ﻧ'] == ['ﻦ'] == ['ﻥ']
+@test ['①'] == ['1']
+@test ['ｶ'] == ['カ']
+@test ['︷'] == ['{']
+@test ['⁹'] == ['₉']
+@test ['㌀'] == ['ア', 'パ', 'ー', 'ト']
+@test ['¼'] == ['1', '⁄', '4']
+@test ['ǆ'] == ['d', 'ž']
+ 
+#3. Singletons
+@test normalize_string("\U212b", :NFD) == "A\U030a"
+@test normalize_string("\U212b", :NFC) == "\U00c5"
+@test normalize_string("\U2126", :NFC) == normalize_string("\U2126", :NFD) == "\U03a9"
+ 
+#4. Canonical Composites
+@test normalize_string("\U00c5", :NFC) == "\U00c5"
+@test normalize_string("\U00c5", :NFD) == "A\U030a"
+@test normalize_string("\U00f4", :NFC) == "\U00f4"
+@test normalize_string("\U00f4", :NFD) == "o\U0302"
+ 
+#5. Multiple Combining Marks
+@test normalize_string("\U1e69", :NFD) == "s\U0323\U0307"
+@test normalize_string("\U1e69", :NFC) == "\U1e69"
+@test normalize_string("\U1e0b\U0323", :NFD) == "d\U0323\U0307"
+@test normalize_string("\U1e0b\U0323", :NFC) == "\U1e0d\U0307"
+@test normalize_string("q\U0307\U0323", :NFC) == "q\U0323\U0307"
+@test normalize_string("q\U0307\U0323", :NFD) == "q\U0323\U0307"
+ 
+#6. Compatibility Composites
+@test normalize_string("\Ufb01", :NFD) == normalize_string("\Ufb01", :NFC) == "\Ufb01"
+@test normalize_string("\Ufb01", :NFKD) == normalize_string("\Ufb01", :NFKC) == "fi"
+@test normalize_string("2\U2075", :NFD) == normalize_string("2\U2075", :NFC) == "2\U2075"
+@test normalize_string("2\U2075", :NFKD) == normalize_string("2\U2075", :NFKC) == "25"
+@test normalize_string("\U1e9b\U0323", :NFD) == "\U017f\U0323\U0307"
+@test normalize_string("\U1e9b\U0323", :NFC) == "\U1e9b\U0323"
+@test normalize_string("\U1e9b\U0323", :NFKD) == "s\U0323\U0307"
+@test normalize_string("\U1e9b\U0323", :NFKC) == "\U1e69"

@@ -1,379 +1,296 @@
-mean(v::AbstractArray) = sum(v)/numel(v)
-mean(v::AbstractArray, dim::Int) = sum(v,dim)/size(v,dim)
-weighted_mean(v::AbstractArray, w::AbstractArray) = sum(v.*w)/sum(w)
 
-function median(v::AbstractArray)
-    n = numel(v)
-    if isodd(n)
-        return select(v, div(n+1, 2))
-    else
-        vs = sort(v)
-        return (vs[div(n, 2)] + vs[div(n, 2) + 1]) / 2
+function mean(iterable)
+    state = start(iterable)
+    if done(iterable, state)
+        error("mean of empty collection undefined: $(repr(iterable))")
     end
+    count = 1
+    total, state = next(iterable, state)
+    while !done(iterable, state)
+        value, state = next(iterable, state)
+        total += value
+        count += 1
+    end
+    return total/count
 end
+mean(v::AbstractArray) = sum(v) / length(v)
 
-## variance with known mean
-function var(v::AbstractVector, m::Number, corrected::Bool)
-    n = length(v)
-    if n == 0 || (n == 1 && corrected)
-        return NaN
-    end
-    x = v - m
-    return dot(x, x) / (n - (corrected ? 1 : 0))
-end
-var(v::AbstractVector, m::Number) = var(v, m, true)
-var(v::AbstractArray, m::Number, corrected::Bool) = var(reshape(v, numel(v)), m, corrected)
-var(v::AbstractArray, m::Number) = var(v, m, true)
-function var(v::Ranges, m::Number, corrected::Bool)
-    f = first(v) - m
-    s = step(v)
-    l = length(v)
-    if l == 0 || (l == 1 && corrected)
-        return NaN
-    end
-    if corrected
-        return f^2 * l / (l - 1) + f * s * l + s^2 * l * (2 * l - 1) / 6
-    else
-        return f^2 + f * s * (l - 1) + s^2 * (l - 1) * (2 * l - 1) / 6
-    end
-end
-var(v::Ranges, m::Number) = var(v, m, true)
-
-## variance
-function var(v::Ranges, corrected::Bool)
-    s = step(v)
-    l = length(v)
-    if l == 0 || (l == 1 && corrected)
-        return NaN
-    end
-    return abs2(s) * (l + 1) * (corrected ? l : (l - 1)) / 12
-end
-var(v::AbstractVector, corrected::Bool) = var(v, mean(v), corrected)
-var(v::AbstractArray, corrected::Bool) = var(reshape(v, numel(v)), corrected)
-var(v::AbstractArray) = var(v, true)
-
-## standard deviation with known mean
-std(v::AbstractArray, m::Number, corrected::Bool) = sqrt(var(v, m, corrected))
-std(v::AbstractArray, m::Number) = std(v, m, true)
-
-## standard deviation
-std(v::AbstractArray, corrected::Bool) = std(v, mean(v), corrected)
-std(v::AbstractArray) = std(v, true)
-std(v::Ranges, corrected::Bool) = sqrt(var(v, corrected))
-std(v::Ranges) = std(v, true)
-
-## median absolute deviation with known center
-mad(v::AbstractArray, center::Number) = median(abs(v - center))
-
-## median absolute deviation
-mad(v::AbstractArray) = mad(v, median(v))
-
-## hist ##
-
-function hist(v::StridedVector, nbins::Integer)
-    h = zeros(Int, nbins)
-    if nbins == 0
-        return h
-    end
-    lo, hi = min(v), max(v)
-    if lo == hi
-        lo -= div(nbins,2)
-        hi += div(nbins,2) + int(isodd(nbins))
-    end
-    binsz = (hi - lo) / nbins
-    for x in v
-        if isfinite(x)
-            i = iround((x - lo) / binsz + 0.5)
-            h[i > nbins ? nbins : i] += 1
+function mean(v::AbstractArray, region)
+    rs = regionsize(v, region)
+    dst = sum(v, region)
+    if rs != 1
+        for i = 1 : length(dst)
+            @inbounds dst[i] /= rs
         end
     end
-    h
+    return dst
 end
 
-hist(x) = hist(x, 10)
-
-function hist(A::StridedMatrix, nbins::Integer)
-    m, n = size(A)
-    h = Array(Int, nbins, n)
-    for j=1:n
-        h[:,j] = hist(sub(A, 1:m, j), nbins)
+function median!{T<:Real}(v::AbstractVector{T}; checknan::Bool=true)
+    isempty(v) && error("median of an empty array is undefined")
+    checknan && any(isnan,v) && error("median of an array with NaNs is undefined")
+    n = length(v)
+    if isodd(n)
+        return select!(v,div(n+1,2))
+    else
+        m = select!(v, div(n,2):div(n,2)+1)
+        return (m[1] + m[2])/2
     end
-    h
+end
+median{T<:Real}(v::AbstractArray{T}; checknan::Bool=true) =
+    median!(vec(copy(v)), checknan=checknan)
+
+## variance with known mean, using pairwise summation
+function varm_pairwise(A::AbstractArray, m, i1,n) # see sum_pairwise
+    if n < 128
+        @inbounds s = abs2(A[i1] - m)
+        for i = i1+1:i1+n-1
+            @inbounds s += abs2(A[i] - m)
+        end
+        return s
+    else
+        n2 = div(n,2)
+        return varm_pairwise(A, m, i1, n2) + varm_pairwise(A, m, i1+n2, n-n2)
+    end
+end
+function varm(v::AbstractArray, m::Number)
+    n = length(v)
+    if n == 0 || n == 1
+        return NaN
+    end
+    return varm_pairwise(v, m, 1,n) / (n - 1)
+end
+varm(v::Ranges, m::Number) = var(v)
+
+## variance
+function var(v::Ranges)
+    s = step(v)
+    l = length(v)
+    if l == 0 || l == 1
+        return NaN
+    end
+    return abs2(s) * (l + 1) * l / 12
+end
+var(v::AbstractArray) = varm(v, mean(v))
+function var(v::AbstractArray, region)
+    x = v .- mean(v, region)
+    return sum(abs2(x), region) / (regionsize(v,region) - 1)
 end
 
-function histc(v::StridedVector, edg)
-    n = length(edg)
+## standard deviation with known mean
+stdm(v, m::Number) = sqrt(varm(v, m))
+
+## standard deviation
+std(v) = sqrt(var(v))
+std(v, region) = sqrt(var(v, region))
+
+## nice-valued ranges for histograms
+function histrange{T<:FloatingPoint,N}(v::AbstractArray{T,N}, n::Integer)
+    if length(v) == 0
+        return Range(0.0,1.0,1)
+    end
+    lo, hi = minimum(v), maximum(v)
+    if hi == lo
+        step = 1.0
+    else
+        bw = (hi - lo) / n
+        e = 10.0^floor(log10(bw))
+        r = bw / e
+        if r <= 2
+            step = 2*e
+        elseif r <= 5
+            step = 5*e
+        else
+            step = 10*e
+        end
+    end
+    start = step*(ceil(lo/step)-1)
+    Range(start,step,1+iceil((hi - start)/step))
+end
+
+function histrange{T<:Integer,N}(v::AbstractArray{T,N}, n::Integer)
+    if length(v) == 0
+        return Range(0,1,1)
+    end
+    lo, hi = minimum(v), maximum(v)
+    if hi == lo
+        step = 1
+    else
+        bw = (hi - lo) / n
+        e = 10^max(0,ifloor(log10(bw)))
+        r = bw / e
+        if r <= 1
+            step = e
+        elseif r <= 2
+            step = 2*e
+        elseif r <= 5
+            step = 5*e
+        else
+            step = 10*e
+        end
+    end
+    start = step*(iceil(lo/step)-1)
+    Range(start,step,1+iceil((hi - start)/step))
+end
+
+## midpoints of intervals
+midpoints(r::Ranges) = r[1:length(r)-1] + 0.5*step(r)
+midpoints(v::AbstractVector) = [0.5*(v[i] + v[i+1]) for i in 1:length(v)-1]
+
+## hist ##
+function sturges(n)  # Sturges' formula
+    n==0 && return one(n)
+    iceil(log2(n))+1
+end
+
+hist(v::AbstractVector, n::Integer) = hist(v,histrange(v,n))
+hist(v::AbstractVector) = hist(v,sturges(length(v)))
+
+function hist(v::AbstractVector, edg::AbstractVector)
+    n = length(edg)-1
     h = zeros(Int, n)
-    if n == 0
-        return h
-    end
-    first = edg[1]
-    last = edg[n]
     for x in v
-        if !isless(last, x) && !isless(x, first)
-            i = search_sorted(edg, x)
-            while isless(x, edg[i])
-                i -= 1
-            end
+        i = searchsortedfirst(edg, x)-1
+        if 1 <= i <= n
             h[i] += 1
         end
     end
-    h
+    edg,h
 end
 
-function histc(A::StridedMatrix, edg)
+function hist(A::AbstractMatrix, edg::AbstractVector)
     m, n = size(A)
-    h = Array(Int, length(edg), n)
-    for j=1:n
-        h[:,j] = histc(sub(A, 1:m, j), edg)
+    H = Array(Int, length(edg)-1, n)
+    for j = 1:n
+        _,H[:,j] = hist(sub(A, 1:m, j), edg)
     end
-    h
+    edg,H
 end
+hist(A::AbstractMatrix, n::Integer) = hist(A,histrange(A,n))
+hist(A::AbstractMatrix) = hist(A,sturges(size(A,1)))
 
-## order (aka, rank), resolving ties using the mean rank
-function tiedrank(v::AbstractArray)
-    n     = length(v)
-    place = order(v)
-    ord   = Array(Float64, n)
-
-    i = 1
-    while i <= n
-        j = i
-        while j + 1 <= n && v[place[i]] == v[place[j + 1]]
-            j += 1
-        end
-
-        if j > i
-            m = sum(i:j) / (j - i + 1)
-            for k = i:j
-                ord[place[k]] = m
-            end
-        else
-            ord[place[i]] = i
-        end
-
-        i = j + 1
+function hist2d(v::AbstractMatrix, edg1::AbstractVector, edg2::AbstractVector)
+    if size(v,2) != 2
+        error("hist2d requires an Nx2 matrix")
     end
-
-    return ord
+    n = length(edg1)-1
+    m = length(edg2)-1
+    h = zeros(Int, n, m)
+    for i = 1:size(v,1)
+        x = searchsortedfirst(edg1, v[i, 1])-1
+        y = searchsortedfirst(edg2, v[i, 2])-1
+        if 1 <= x <= n && 1 <= y <= m
+            h[x,y] += 1
+        end
+    end
+    edg1,edg2,h
 end
+hist2d(v::AbstractMatrix, edg::AbstractVector) = hist2d(v, edg, edg)
+function hist2d(v::AbstractMatrix, n::Integer)
+    m = size(v,1)
+    hist2d(v, histrange(sub(v, 1:m, 1),n), histrange(sub(v, 1:m, 2),n))
+end
+function hist2d(v::AbstractMatrix, n1::Integer, n2::Integer)
+    m = size(v,1)
+    hist2d(v, histrange(sub(v, 1:m,1),n1), histrange(sub(v, 1:m,2),n2))
+end
+hist2d(v::AbstractMatrix) = hist2d(v, sturges(size(v,1)))
 
 ## pearson covariance functions ##
 
-# pearson covariance between two vectors, with known means
-function _jl_cov_pearson1(x::AbstractArray, y::AbstractArray, mx::Number, my::Number, corrected::Bool)
-    n = numel(x)
-    if n == 0 || (n == 1 && corrected)
-        return NaN
+function center(x::AbstractMatrix)
+    m,n = size(x)
+    res = Array(promote_type(eltype(x),Float64), size(x))
+    for j in 1:n
+        colmean = mean(x[:,j])
+        for i in 1:m
+            res[i,j] = x[i,j] - colmean 
+        end
     end
-    x0 = x - mx
-    y0 = y - my
-    return (x0'*y0)[1] / (n - (corrected ? 1 : 0))
+    res
 end
 
-# pearson covariance between two vectors
-function cov_pearson(x::AbstractVector, y::AbstractVector, corrected::Bool)
-    if numel(x) != numel(y) 
-        error("cov_pearson: incompatible dimensions")
+function center(x::AbstractVector)
+    colmean = mean(x)
+    res = Array(promote_type(eltype(x),Float64), size(x))
+    for i in 1:length(x)
+        res[i] = x[i] - colmean 
     end
-
-    mx = mean(x)
-    my = mean(y)
-    _jl_cov_pearson1(x, y, mx, my, corrected)
+    res
 end
-cov_pearson(x::AbstractVector, y::AbstractVector) = cov_pearson(x, y, true)
 
-# pearson covariance over all pairs of columns of a matrix
-function _jl_cov_pearson(x::AbstractMatrix, mxs::AbstractMatrix, corrected::Bool)
+function cov(x::AbstractVecOrMat, y::AbstractVecOrMat)
+    size(x, 1)==size(y, 1) || throw(DimensionMismatch())
     n = size(x, 1)
-    if n == 0 || (n == 1 && corrected)
-        return NaN
-    end
-    x0 = x - repmat(mxs, n, 1)
-    return (x0'*x0) / (n - (corrected ? 1 : 0))
+    xc = center(x)
+    yc = center(y)
+    conj(xc' * yc / (n - 1))
 end
-cov_pearson(x::AbstractMatrix, corrected::Bool) = _jl_cov_pearson(x, mean(x, 1), corrected)
-cov_pearson(x::AbstractMatrix) = cov_pearson(x, true)
+cov(x::AbstractVector, y::AbstractVector) = cov(x'', y)[1]
 
-# pearson covariance over all pairs of columns of two matrices
-function _jl_cov_pearson(x::AbstractMatrix, y::AbstractMatrix,
-                     mxs::AbstractMatrix, mys::AbstractMatrix,
-                     corrected::Bool)
+function cov(x::AbstractVecOrMat)
     n = size(x, 1)
-    if n == 0 || (n == 1 && corrected)
-        return NaN
+    xc = center(x)
+    conj(xc' * xc / (n - 1))
+end
+cov(x::AbstractVector) = cov(x'')[1]
+
+function cor(x::AbstractVecOrMat, y::AbstractVecOrMat)
+    z = cov(x, y)
+    scale = mapslices(std, x, 1)'*mapslices(std, y, 1)
+    z ./ scale
+end
+cor(x::AbstractVector, y::AbstractVector) =
+    cov(x, y) / std(x) / std(y)
+    
+
+function cor(x::AbstractVecOrMat)
+    res = cov(x)
+    n = size(res, 1)
+    scale = 1 / sqrt(diag(res))
+    for j in 1:n
+        for i in 1 : j - 1
+            res[i,j] *= scale[i] * scale[j] 
+            res[j,i] = res[i,j]
+        end
+        res[j,j] = 1.0
     end
-    x0 = x - repmat(mxs, n, 1)
-    y0 = y - repmat(mys, n, 1)
-    return (x0'*y0) / (n - (corrected ? 1 : 0))
+    res 
 end
-function cov_pearson(x::AbstractMatrix, y::AbstractMatrix, corrected::Bool)
-    if size(x) != size(y)
-        error("cov_pearson: incompatible dimensions")
-    end
-
-    if is(x, y)
-        return cov_pearson(x, corrected)
-    end
-
-    n = size(x, 1)
-    mxs = mean(x, 1)
-    mys = mean(y, 1)
-    return _jl_cov_pearson(x, y, mxs, mys, corrected)
-end
-cov_pearson(x::AbstractMatrix, y::AbstractMatrix) = cov_pearson(x, y, true)
-
-## spearman covariance functions ##
-
-# spearman covariance between two vectors
-function cov_spearman(x::AbstractVector, y::AbstractVector, corrected::Bool)
-    cov_pearson(tiedrank(x), tiedrank(y), corrected)
-end
-cov_spearman(x::AbstractVector, y::AbstractVector) = cov_spearman(x, y, true)
-
-# spearman covariance over all pairs of columns of a matrix
-function cov_spearman(x::AbstractMatrix, corrected::Bool)
-    cov_pearson(apply(hcat, amap(tiedrank, x, 2)), corrected)
-end
-cov_spearman(x::AbstractMatrix) = cov_spearman(x, true)
-
-# spearman covariance over all pairs of columns of two matrices
-function cov_spearman(x::AbstractMatrix, y::AbstractMatrix, corrected::Bool)
-    if is(x, y)
-        return cov_spearman(x, corrected)
-    end
-
-    cov_pearson(
-        apply(hcat, amap(tiedrank, x, 2)),
-        apply(hcat, amap(tiedrank, y, 2)),
-        corrected)
-end
-cov_spearman(x::AbstractMatrix, y::AbstractMatrix) = cov_spearman(x, y, true)
-
-const cov = cov_pearson
-
-## pearson correlation functions ##
-
-# pearson correlation between two vectors
-function cor_pearson(x::AbstractVector, y::AbstractVector, corrected::Bool)
-    if numel(x) != numel(y)
-        error("cor_pearson: incompatible dimensions")
-    end
-
-    mx = mean(x)
-    my = mean(y)
-    sx = std(x, mx, corrected)
-    sy = std(y, my, corrected)
-
-    return _jl_cov_pearson1(x, y, mx, my, corrected) / (sx * sy)
-end
-cor_pearson(x::AbstractVector, y::AbstractVector) = cor_pearson(x, y, true)
-
-# pearson correlation over all pairs of columns of a matrix
-function cor_pearson{T}(x::AbstractMatrix{T}, corrected::Bool)
-    (n,m) = size(x)
-    mxs = mean(x, 1)
-    sxs = similar(mxs)
-    for i = 1:m
-        sxs[i] = std(sub(x, (1:n, i)), mxs[i], corrected)
-    end
-    R = _jl_cov_pearson(x, mxs, corrected) ./ (sxs' * sxs)
-
-    R[1:m+1:end] = one(T) # fix diagonal for numerical errors
-
-    return R
-end
-cor_pearson(x::AbstractMatrix) = cor_pearson(x, true)
-
-# pearson correlation over all pairs of columns of two matrices
-function cor_pearson(x::AbstractMatrix, y::AbstractMatrix, corrected::Bool)
-    if size(x) != size(y)
-        error("cor_pearson: incompatible dimensions")
-    end
-
-    if is(x, y)
-        return cor_pearson(x, corrected)
-    end
-
-    (n,m) = size(x)
-    mxs = mean(x, 1)
-    mys = mean(y, 1)
-    sxs = similar(mxs)
-    sys = similar(mys)
-    for i = 1:m
-        sxs[i] = std(sub(x, (1:n, i)), mxs[i], corrected)
-        sys[i] = std(sub(y, (1:n, i)), mys[i], corrected)
-    end
-
-    return _jl_cov_pearson(x, y, mxs, mys, corrected) ./ (sxs' * sys)
-end
-cor_pearson(x::AbstractMatrix, y::AbstractMatrix) = cor_pearson(x, y, true)
-
-## spearman correlation functions ##
-
-# spearman correlation between two vectors
-function cor_spearman(x::AbstractVector, y::AbstractVector, corrected::Bool)
-    cor_pearson(tiedrank(x), tiedrank(y), corrected)
-end
-cor_spearman(x::AbstractVector, y::AbstractVector) = cor_spearman(x, y, true)
-
-# spearman correlation over all pairs of columns of a matrix
-function cor_spearman(x::AbstractMatrix, corrected::Bool)
-    cor_pearson(apply(hcat, amap(tiedrank, x, 2)), corrected)
-end
-cor_spearman(x::AbstractMatrix) = cor_spearman(x, true)
-
-# spearman correlation over all pairs of columns of two matrices
-function cor_spearman(x::AbstractMatrix, y::AbstractMatrix, corrected::Bool)
-    if is(x, y)
-        return cor_spearman(x, corrected)
-    end
-
-    cor_pearson(
-        apply(hcat, amap(tiedrank, x, 2)),
-        apply(hcat, amap(tiedrank, y, 2)),
-        corrected)
-end
-cor_spearman(x::AbstractMatrix, y::AbstractMatrix) = cor_spearman(x, y, true)
-
-const cor = cor_pearson
+cor(x::AbstractVector) = cor(x'')[1]
 
 ## quantiles ##
 
 # for now, use the R/S definition of quantile; may want variants later
 # see ?quantile in R -- this is type 7
-function quantile(x, qs)
-    # make sure the quantiles are in [0,1]
-    bqs = _bound_quantiles(qs)
-    
-    lx = length(x)
-    lqs = length(bqs)
-    
-    if lx > 0 && lqs > 0
-        index = 1 + (lx-1) * bqs
-        lo = ifloor(index)
-        hi = iceil(index)
-        sortedX = sort(x)
-        i = index .> lo
-        ret = float(sortedX[lo])
-        i = [1:length(i)][i]
-        h = (index - lo)[i]
-        ret[i] = (1-h) .* ret[i] + h .* sortedX[hi[i]]
-    else
-        ret = zeros(lqs) * NaN
-    end
-    
-    ret
-end
-quantile(x, q::Number) = quantile(x, [q])[1]
-quartile(x) = quantile(x, [.25, .5, .75])
-quintile(x) = quantile(x, [.2:.2:.8])
-decile(x) = quantile(x, [.1:.1:.9])
+function quantile!(v::AbstractVector, q::AbstractVector)
+    isempty(v) && error("empty data array")
+    isempty(q) && error("empty quantile array")
 
-function _bound_quantiles(qs)
-    epsilon = 100 * eps()
-    if (any(qs .< -epsilon) || any(qs .> 1 + epsilon))
-        error("quantiles out of [0,1] range!")
+    # make sure the quantiles are in [0,1]
+    q = bound_quantiles(q)
+
+    lv = length(v)
+    lq = length(q)
+
+    index = 1 + (lv-1)*q
+    lo = ifloor(index)
+    hi = iceil(index)
+    sort!(v)
+    isnan(v[end]) && error("quantiles are undefined in presence of NaNs")
+    i = find(index .> lo)
+    r = float(v[lo])
+    h = (index-lo)[i]
+    r[i] = (1-h).*r[i] + h.*v[hi[i]]
+    return r
+end
+quantile(v::AbstractVector, q::AbstractVector) = quantile!(copy(v),q)
+quantile(v::AbstractVector, q::Number) = quantile(v,[q])[1]
+
+function bound_quantiles(qs::AbstractVector)
+    epsilon = 100*eps()
+    if (any(qs .< -epsilon) || any(qs .> 1+epsilon))
+        error("quantiles out of [0,1] range")
     end
-    [min(1, max(0, q)) for q = qs]
+    [min(1,max(0,q)) for q = qs]
 end

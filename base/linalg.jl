@@ -1,109 +1,223 @@
-## linalg.jl: Some generic Linear Algebra definitions
+module LinAlg
 
-cross(a::Vector, b::Vector) =
-    [a[2]*b[3]-a[3]*b[2], a[3]*b[1]-a[1]*b[3], a[1]*b[2]-a[2]*b[1]]
+importall Base
+import Base: USE_BLAS64, size, copy, copy_transpose!, power_by_squaring, print_matrix
 
-triu(M::AbstractMatrix) = triu(M,0)
-tril(M::AbstractMatrix) = tril(M,0)
-#triu{T}(M::AbstractMatrix{T}, k::Integer)
-#tril{T}(M::AbstractMatrix{T}, k::Integer)
-triu!(M::AbstractMatrix) = triu!(M,0)
-tril!(M::AbstractMatrix) = tril!(M,0)
+export 
+# Modules
+    LAPACK,
+    BLAS,
 
-#diff(a::AbstractVector)
-#diff(a::AbstractMatrix, dim::Integer)
-diff(a::AbstractMatrix) = diff(a, 1)
+# Types
+    SymTridiagonal,
+    Tridiagonal,
+    Bidiagonal,
+    Woodbury,
+    Factorization,
+    BunchKaufman,
+    Cholesky,
+    CholeskyPivoted,
+    Eigen,
+    GeneralizedEigen,
+    GeneralizedSVD,
+    GeneralizedSchur,
+    Hessenberg,
+    LU,
+    LUTridiagonal,
+    LDLTTridiagonal,
+    QR,
+    QRPivoted,
+    Schur,
+    SVD,
+    Hermitian,
+    Symmetric,
+    Triangular,
+    Diagonal,
 
-gradient(F::AbstractVector) = gradient(F, [1:length(F)])
-gradient(F::AbstractVector, h::Real) = gradient(F, [h*(1:length(F))])
-#gradient(F::AbstractVector, h::AbstractVector)
+# Functions
+    axpy!,
+    bkfact,
+    bkfact!,
+    check_blas,
+    chol,
+    cholfact,
+    cholfact!,
+    cholpfact,
+    cholpfact!,
+    cond,
+    condskeel,
+    copy!,
+    cross,
+    ctranspose,
+    det,
+    diag,
+    diagind,
+    diagm,
+    diff,
+    dot,
+    eig,
+    eigfact,
+    eigfact!,
+    eigmax,
+    eigmin,
+    eigs,
+    eigvals,
+    eigvecs,
+    expm,
+    sqrtm,
+    eye,
+    factorize,
+    givens,
+    gradient,
+    hessfact,
+    hessfact!,
+    ishermitian,
+    isposdef,
+    isposdef!,
+    issym,
+    istril,
+    istriu,
+    kron,
+    ldltd!,
+    ldltd,
+    linreg,
+    logdet,
+    lu,
+    lufact,
+    lufact!,
+    norm,
+    normfro,
+    null,
+    peakflops,
+    pinv,
+    qr,
+    qrfact!,
+    qrfact,
+    qrp,
+    qrpfact!,
+    qrpfact,
+    rank,
+    rref,
+    scale,
+    scale!,
+    schur,
+    schurfact!,
+    schurfact,
+    solve,
+    svd,
+    svdfact!,
+    svdfact,
+    svdvals!,
+    svdvals,
+    trace,
+    transpose,
+    tril,
+    triu,
+    tril!,
+    triu!,
 
-diag(A::AbstractVector) = error("Perhaps you meant to use diagm().")
-#diag(A::AbstractMatrix)
+# Operators
+    \,
+    /,
+    A_ldiv_B!,
+    A_ldiv_Bc,
+    A_ldiv_Bt,
+    A_mul_B,
+    A_mul_B!,
+    A_mul_Bc,
+    A_mul_Bc!,
+    A_mul_Bt,
+    A_mul_Bt!,
+    A_rdiv_Bc,
+    A_rdiv_Bt,
+    Ac_ldiv_B,
+    Ac_ldiv_Bc,
+    Ac_mul_b_RFP,
+    Ac_mul_B,
+    Ac_mul_B!,
+    Ac_mul_Bc,
+    Ac_mul_Bc!,
+    Ac_rdiv_B,
+    Ac_rdiv_Bc,
+    At_ldiv_B,
+    At_ldiv_Bt,
+    At_mul_B,
+    At_mul_B!,
+    At_mul_Bt,
+    At_mul_Bt!,
+    At_rdiv_B,
+    At_rdiv_Bt
 
-#diagm{T}(v::Union(AbstractVector{T},AbstractMatrix{T}))
+typealias BlasFloat Union(Float64,Float32,Complex128,Complex64)
+typealias BlasReal Union(Float64,Float32)
+typealias BlasComplex Union(Complex128,Complex64)
+typealias BlasChar Char
 
-function norm(x::AbstractVector, p::Number)
-    if length(x) == 0
-        return zero(eltype(x))
-    elseif p == Inf
-        return max(abs(x))
-    elseif p == -Inf
-        return min(abs(x))
-    else
-        return sum(abs(x).^p).^(1/p)
+if USE_BLAS64
+    typealias BlasInt Int64
+    blas_int(x) = int64(x)
+else
+    typealias BlasInt Int32
+    blas_int(x) = int32(x)
+end
+
+#Check that stride of matrix/vector is 1
+function chkstride1(A::StridedVecOrMat...)
+    for a in A 
+        stride(a,1)== 1 || error("Matrix does not have contiguous columns")
+    end  
+end
+
+#Check that matrix is square
+function chksquare(A...)
+    sizes=Int[]
+    for a in A 
+        size(a,1)==size(a,2) || throw(DimensionMismatch("Matrix is not square: dimensions are $(size(a))"))
+        push!(sizes, size(a,1))
+    end
+    length(A)==1 ? sizes[1] : sizes
+end
+
+#Check that upper/lower (for special matrices) is correctly specified
+macro chkuplo()
+   :((uplo=='U' || uplo=='L') || throw(ArgumentError("""invalid uplo = $uplo
+            
+Valid choices are 'U' (upper) or 'L' (lower).""")))
+end
+
+include("linalg/exceptions.jl")
+include("linalg/generic.jl")
+
+include("linalg/blas.jl")
+include("linalg/matmul.jl")
+include("linalg/lapack.jl")
+
+include("linalg/dense.jl")
+include("linalg/factorization.jl")
+
+include("linalg/bunchkaufman.jl")
+include("linalg/triangular.jl")
+include("linalg/symmetric.jl")
+include("linalg/woodbury.jl")
+include("linalg/tridiag.jl")
+include("linalg/diagonal.jl")
+include("linalg/bidiag.jl")
+include("linalg/rectfullpacked.jl")
+include("linalg/givens.jl")
+include("linalg/special.jl")
+include("linalg/bitarray.jl")
+
+include("linalg/sparse.jl")
+include("linalg/umfpack.jl")
+include("linalg/cholmod.jl")
+
+include("linalg/arpack.jl")
+include("linalg/arnoldi.jl")
+
+function init()
+    if Base.blas_vendor() == :mkl
+        ccall((:MKL_Set_Interface_Layer, Base.libblas_name), Void, (Cint,), USE_BLAS64 ? 1 : 0)
     end
 end
 
-norm(x::AbstractVector) = sqrt(real(dot(x,x)))
-
-function norm(A::AbstractMatrix, p)
-    m, n = size(A)
-    if m == 0 || n == 0
-        return zero(eltype(A))
-    elseif m == 1 || n == 1
-        return norm(reshape(A, numel(A)), p)
-    elseif p == 1
-        return max(sum(abs(A),1))
-    elseif p == 2
-        return max(svdvals(A))
-    elseif p == Inf
-        return max(sum(abs(A),2))
-    elseif p == "fro"
-        return sqrt(sum(diag(A'*A)))
-    else
-        error("invalid parameter to matrix norm")
-    end
-end
-
-norm(A::AbstractMatrix) = norm(A, 2)
-rank(A::AbstractMatrix, tol::Real) = sum(svdvals(A) .> tol)
-function rank(A::AbstractMatrix)
-    m,n = size(A)
-    if m == 0 || n == 0; return 0; end
-    sv = svdvals(A)
-    sum(sv .> max(size(A,1),size(A,2))*eps(sv[1]))
-end
-
-trace(A::AbstractMatrix) = sum(diag(A))
-
-#kron(a::AbstractVector, b::AbstractVector)
-#kron{T,S}(a::AbstractMatrix{T}, b::AbstractMatrix{S})
-
-#det(a::AbstractMatrix)
-inv(a::AbstractMatrix) = a \ one(a)
-cond(a::AbstractMatrix, p) = norm(a, p) * norm(inv(a), p)
-cond(a::AbstractMatrix) = cond(a, 2)
-
-#issym(A::AbstractMatrix)
-#ishermitian(A::AbstractMatrix)
-#istriu(A::AbstractMatrix)
-#istril(A::AbstractMatrix)
-
-function linreg{T<:Number}(X::StridedVecOrMat{T}, y::Vector{T})
-    [ones(T, size(X,1)) X] \ y
-end
-
-# weighted least squares
-function linreg(x::AbstractVector, y::AbstractVector, w::AbstractVector)
-    w = sqrt(w)
-    [w w.*x] \ (w.*y)
-end
-
-# multiply by diagonal matrix as vector
-#diagmm!(C::AbstractMatrix, A::AbstractMatrix, b::AbstractVector)
-
-#diagmm!(C::AbstractMatrix, b::AbstractVector, A::AbstractMatrix)
-
-diagmm!(A::AbstractMatrix, b::AbstractVector) = diagmm!(A,A,b)
-diagmm!(b::AbstractVector, A::AbstractMatrix) = diagmm!(A,b,A)
-
-#diagmm(A::AbstractMatrix, b::AbstractVector)
-#diagmm(b::AbstractVector, A::AbstractMatrix)
-
-#^(A::AbstractMatrix, p::Number)
-
-#findmax(a::AbstractArray)
-#findmin(a::AbstractArray)
-
-#rref{T}(A::AbstractMatrix{T})
+end # module LinAlg

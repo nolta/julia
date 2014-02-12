@@ -12,8 +12,10 @@ Building the documentation
 The documentation is built using [Sphinx](http://sphinx.pocoo.org/) and LaTeX.
 On ubuntu, you'll need the following packages installed:
 
+    latex-cjk-all
     python-sphinx
     texlive
+    texlive-lang-cjk
     texlive-latex-extra
 
 Then run
@@ -28,8 +30,12 @@ File layout
 
     conf.py             Sphinx configuration
     helpdb.jl           REPL help database
-    sphinx/             Sphinx extensions and plugins
-    sphinx/jlhelp.py    Sphinx plugin to build helpdb.jl
     stdlib/             Julia standard library documentation
-    _themes/            Sphinx html themes
+    UNDOCUMENTED.rst    Undocumented functions (to be filled in and copied to 
+                        the correct location in stdlib/)
 
+Sphinx extensions and theme
+---------------------------
+The extensions to Sphinx and the theme are in the
+https://github.com/JuliaLang/JuliaDoc repository, and can also be used to style
+package documentation.

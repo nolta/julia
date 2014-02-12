@@ -10,10 +10,14 @@
 #include <assert.h>
 #include <ctype.h>
 #include <sys/types.h>
-#include <sys/time.h>
 #include <sys/stat.h>
 #include <errno.h>
+
 #include "flisp.h"
+
+#if !defined(_OS_WINDOWS_)
+#include <sys/time.h>
+#endif /* !_OS_WINDOWS_ */
 
 size_t llength(value_t v)
 {
@@ -127,7 +131,7 @@ static value_t fl_symbol(value_t *args, u_int32_t nargs)
     argcount("symbol", nargs, 1);
     if (!fl_isstring(args[0]))
         type_error("symbol", "string", args[0]);
-    return symbol(cvalue_data(args[0]));
+    return symbol((char*)cvalue_data(args[0]));
 }
 
 static value_t fl_keywordp(value_t *args, u_int32_t nargs)
@@ -240,7 +244,7 @@ static value_t fl_fixnum(value_t *args, u_int32_t nargs)
     }
     else if (iscprim(args[0])) {
         cprim_t *cp = (cprim_t*)ptr(args[0]);
-        return fixnum(conv_to_long(cp_data(cp), cp_numtype(cp)));
+        return fixnum(conv_to_ptrdiff(cp_data(cp), cp_numtype(cp)));
     }
     type_error("fixnum", "number", args[0]);
 }
@@ -279,7 +283,7 @@ static value_t fl_vector_alloc(value_t *args, u_int32_t nargs)
     value_t f, v;
     if (nargs == 0)
         lerror(ArgError, "vector.alloc: too few arguments");
-    i = (fixnum_t)toulong(args[0], "vector.alloc");
+    i = (fixnum_t)tosize(args[0], "vector.alloc");
     if (i < 0)
         lerror(ArgError, "vector.alloc: invalid size");
     if (nargs == 2)
@@ -304,26 +308,23 @@ static value_t fl_time_now(value_t *args, u_int32_t nargs)
 
 static value_t fl_path_cwd(value_t *args, uint32_t nargs)
 {
-    uv_err_t err;
+    int err;
     if (nargs > 1)
         argcount("path.cwd", nargs, 1);
     if (nargs == 0) {
         char buf[1024];
         err = uv_cwd(buf, sizeof(buf));
-        if (err.code != UV_OK)
+        if (err != 0)
           lerrorf(IOError, "path.cwd: could not get cwd: %s", uv_strerror(err));
         return string_from_cstr(buf);
     }
     char *ptr = tostring(args[0], "path.cwd");
     err = uv_chdir(ptr);
-    if (err.code != UV_OK)
+    if (err != 0)
         lerrorf(IOError, "path.cwd: could not cd to %s: %s", ptr, uv_strerror(err));
     return FL_T;
 }
 
-#ifdef WIN32
-#define stat _stat
-#endif
 static value_t fl_path_exists(value_t *args, uint32_t nargs)
 {
     argcount("path.exists?", nargs, 1);
@@ -351,9 +352,9 @@ static value_t fl_os_setenv(value_t *args, uint32_t nargs)
     char *name = tostring(args[0], "os.setenv");
     int result;
     if (args[1] == FL_F) {
-#ifdef __linux__
+#ifdef _OS_LINUX_
         result = unsetenv(name);
-#elif defined(__WIN32__)
+#elif defined(_OS_WINDOWS_)
         result = SetEnvironmentVariable(name,NULL);
 #else
         (void)unsetenv(name);
@@ -363,7 +364,7 @@ static value_t fl_os_setenv(value_t *args, uint32_t nargs)
     }
     else {
         char *val = tostring(args[1], "os.setenv");
-#if defined (__WIN32__)
+#if defined (_OS_WINDOWS_)
         result = SetEnvironmentVariable(name,val);
 #else
 		result = setenv(name, val, 1);

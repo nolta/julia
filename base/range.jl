@@ -2,17 +2,16 @@
 
 typealias Dims (Int...)
 
-abstract Ranges{T<:Real} <: AbstractArray{T,1}
+abstract Ranges{T} <: AbstractArray{T,1}
 
-type Range{T<:Real} <: Ranges{T}
+immutable Range{T<:Real} <: Ranges{T}
     start::T
     step::T
     len::Int
 
     function Range(start::T, step::T, len::Int)
-        if step != step; error("Range: step cannot be NaN"); end
-        if step == 0;    error("Range: step cannot be zero"); end
-        if !(len >= 0);  error("Range: length must be non-negative"); end
+        if step != step; error("step cannot be NaN"); end
+        if !(len >= 0);  error("length must be non-negative"); end
         new(start, step, len)
     end
     Range(start::T, step::T, len::Integer) = Range(start, step, int(len))
@@ -20,36 +19,86 @@ type Range{T<:Real} <: Ranges{T}
 end
 Range{T}(start::T, step, len::Integer) = Range{T}(start, step, len)
 
-type Range1{T<:Real} <: Ranges{T}
+immutable Range1{T<:Real} <: Ranges{T}
     start::T
     len::Int
 
     function Range1(start::T, len::Int)
-        if !(len >= 0); error("Range: length must be non-negative"); end
+        if len < 0; error("length must be non-negative"); end
         new(start, len)
     end
     Range1(start::T, len::Integer) = Range1(start, int(len))
+
+    # TODO: this is a hack to elide the len<0 check for colon.
+    # should store start and stop for integer ranges instead
+    Range1(start::T, len::Integer, _) = new(start, int(len))
 end
 Range1{T}(start::T, len::Integer) = Range1{T}(start, len)
 
-colon{T<:Integer}(start::T, step::T, stop::T) =
-    Range(start, step, max(0, div(stop-start+step, step)))
+function colon{T<:Integer}(start::T, step::T, stop::T)
+    step != 0 || error("step cannot be zero in colon syntax")
+    Range{T}(start, step, max(0, 1 + fld(stop-start, step)))
+end
+
 colon{T<:Integer}(start::T, stop::T) =
-    Range1(start, max(0, stop-start+1))
+    Range1{T}(start, ifelse(stop<start, 0, int(stop-start+1)))
+
+if Int === Int32
+colon{T<:Union(Int8,Int16,Int32,Uint8,Uint16)}(start::T, stop::T) =
+    Range1{T}(start,
+              ifelse(stop<start, 0,
+                     checked_add(checked_sub(convert(Int,stop),convert(Int,start)),1)),
+              0)  # hack to elide negative length check
+else
+colon{T<:Union(Int8,Int16,Int32,Int64,Uint8,Uint16,Uint32)}(start::T, stop::T) =
+    Range1{T}(start,
+              ifelse(stop<start, 0,
+                     checked_add(checked_sub(convert(Int,stop),convert(Int,start)),1)),
+              0)  # hack to elide negative length check
+end
 
 function colon{T<:Real}(start::T, step::T, stop::T)
-    len = (stop-start)/step
-    if len >= typemax(Int)
-        error("Range: length ",len," is too large")
+    step != 0 || error("step cannot be zero in colon syntax")
+    if (step<0) != (stop<start)
+        len = 0
+    else
+        nf = (stop-start)/step + 1
+        if T <: FloatingPoint
+            n = round(nf)
+            if n > 1 && abs(n-nf) < eps(n)*3
+                # adjust step to try to hit stop exactly
+                step = (stop-start)/(n-1)
+                len = itrunc(n)
+            else
+                len = itrunc(nf)
+            end
+        else
+            n = nf
+            len = itrunc(n)
+        end
+        if n >= typemax(Int)
+            error("length ",n," is too large")
+        end
     end
-    Range(start, step, max(0, ifloor(len)+1))
+    Range(start, step, len)
 end
 function colon{T<:Real}(start::T, stop::T)
-    len = stop-start
-    if len >= typemax(Int)
-    error("Range: length ",len," is too large")
+    if stop < start
+        len = 0
+    else
+        nf = stop - start + 1
+        if T <: FloatingPoint
+            n = round(nf)
+            len = abs(n-nf) < eps(n)*3 ? itrunc(n) : itrunc(nf)
+        else
+            n = nf
+            len = itrunc(n)
+        end
+        if n >= typemax(Int)
+            error("length ",n," is too large")
+        end
     end
-    Range1(start, max(0, ifloor(len)+1))
+    Range1(start, len)
 end
 
 colon(start::Real, step::Real, stop::Real) = colon(promote(start, step, stop)...)
@@ -58,71 +107,201 @@ colon(start::Real, stop::Real) = colon(promote(start, stop)...)
 similar(r::Ranges, T::Type, dims::Dims) = Array(T, dims)
 
 length(r::Ranges) = r.len
-const numel = length
 size(r::Ranges) = (r.len,)
 isempty(r::Ranges) = r.len==0
 first(r::Ranges) = r.start
-last{T}(r::Range{T}) = r.start + oftype(T,r.len-1)*step(r)
-last{T}(r::Range1{T}) = r.start + oftype(T,r.len-1)
+last{T}(r::Range1{T}) = oftype(T, r.start + r.len-1)
+last{T}(r::Range{T})  = oftype(T, r.start + (r.len-1)*r.step)
 
 step(r::Range)  = r.step
 step(r::Range1) = one(r.start)
 
-min(r::Range1) = r.start
-max(r::Range1) = last(r)
-min(r::Range) = r.step > 0 ? r.start : last(r)
-max(r::Range) = r.step > 0 ? last(r) : r.start
+minimum(r::Range1) = isempty(r) ? error("range must be non-empty") : first(r)
+maximum(r::Range1) = isempty(r) ? error("range must be non-empty") : last(r)
+minimum(r::Ranges) = isempty(r) ? error("range must be non-empty") : step(r) > 0 ? first(r) : last(r)
+maximum(r::Ranges) = isempty(r) ? error("range must be non-empty") : step(r) > 0 ? last(r) : first(r)
+
+ctranspose(r::Ranges) = [x for _=1, x=r]
+transpose(r::Ranges) = r'
 
 # Ranges are intended to be immutable
 copy(r::Ranges) = r
 
-function ref{T}(r::Range{T}, i::Integer)
+getindex(r::Ranges, i::Real) = getindex(r, to_index(i))
+
+function getindex{T}(r::Ranges{T}, i::Integer)
     if !(1 <= i <= r.len); error(BoundsError); end
-    r.start + oftype(T,i-1)*step(r)
-end
-function ref{T}(r::Range1{T}, i::Integer)
-    if !(1 <= i <= r.len); error(BoundsError); end
-    r.start + oftype(T,i-1)
+    oftype(T, r.start + (i-1)*step(r))
 end
 
-ref(r::Range, s::Range{Int}) =
-    r.len < last(s) ? error(BoundsError) : Range(r[s.start], r.step*s.step, s.len)
-ref(r::Range1, s::Range{Int}) =
-    r.len < last(s) ? error(BoundsError) : Range(r[s.start], s.step, s.len)
-ref(r::Range, s::Range1{Int}) =
-    r.len < last(s) ? error(BoundsError) : Range(r[s.start], r.step, s.len)
-ref(r::Range1, s::Range1{Int}) =
-    r.len < last(s) ? error(BoundsError) : Range1(r[s.start], s.len)
+function getindex(r::Range1, s::Range1{Int})
+    if s.len > 0
+        if !(1 <= last(s) <= r.len)
+            throw(BoundsError())
+        end
+        Range1(r[s.start], s.len)
+    else
+        Range1(r.start + s.start-1, s.len)
+    end
+end
 
-show(io, r::Range)  = print(io, r.start,':',r.step,':',last(r))
-show(io, r::Range1) = print(io, r.start,':',last(r))
+function getindex(r::Ranges, s::Ranges{Int})
+    if s.len > 0
+        if !(1 <= last(s) <= r.len)
+            throw(BoundsError())
+        end
+        Range(r[s.start], step(r)*step(s), s.len)
+    else
+        Range(r.start + (s.start-1)*step(r), step(r)*step(s), s.len)
+    end
+end
+
+function show(io::IO, r::Range)
+    if step(r) == 0
+        print(io, "Range(",r.start,",",step(r),",",r.len,")")
+    else
+        print(io, repr(r.start),':',repr(step(r)),':',repr(last(r)))
+    end
+end
+show(io::IO, r::Range1) = print(io, repr(r.start),':',repr(last(r)))
 
 start(r::Ranges) = 0
-next(r::Range,  i) = (r.start + oftype(r.start,i)*step(r), i+1)
-next(r::Range1, i) = (r.start + oftype(r.start,i), i+1)
+next{T}(r::Range{T},  i) = (oftype(T, r.start + i*step(r)), i+1)
+next{T}(r::Range1{T}, i) = (oftype(T, r.start + i), i+1)
 done(r::Ranges, i) = (length(r) <= i)
 
-isequal(r::Ranges, s::Ranges) = (r.start==s.start) & (step(r)==step(s)) & (r.len==s.len)
-isequal(r::Range1, s::Range1) = (r.start==s.start) & (r.len==s.len)
+# though these look very similar to the above, for some reason LLVM generates
+# much better code for these.
+start{T<:Integer}(r::Range1{T}) = r.start
+next{T<:Integer}(r::Range1{T}, i) = (i, oftype(T, i+1))
+done{T<:Integer}(r::Range1{T}, i) = i==oftype(T, r.start+r.len)
+
+==(r::Ranges, s::Ranges) = (r.start==s.start) & (step(r)==step(s)) & (r.len==s.len)
+==(r::Range1, s::Range1) = (r.start==s.start) & (r.len==s.len)
 
 # TODO: isless?
 
-intersect(r::Range1, s::Range1) = max(r.start,s.start):min(last(r),last(s))
+intersect{T1<:Integer, T2<:Integer}(r::Range1{T1}, s::Range1{T2}) = max(r.start,s.start):min(last(r),last(s))
 
-# TODO: general intersect?
-function intersect(r::Range1, s::Range)
-    sta = first(s)
-    ste = step(s)
-    sto = last(s)
-    lo = first(r)
-    hi = last(r)
-    i0 = max(lo, sta + ste*div((lo-sta)+ste-1, ste))
-    i1 = min(hi, sta + ste*div((hi-sta), ste))
-    i0 = max(i0, sta)
-    i1 = min(i1, sto)
-    i0:ste:i1
+intersect{T<:Integer}(i::Integer, r::Range1{T}) =
+    i < first(r) ? (first(r):i) :
+    i > last(r)  ? (i:last(r))  : (i:i)
+
+intersect{T<:Integer}(r::Range1{T}, i::Integer) = intersect(i, r)
+
+function intersect{T1<:Integer, T2<:Integer}(r::Range1{T1}, s::Range{T2})
+    if length(s) == 0
+        Range1(first(r), 0)
+    elseif step(s) == 0
+        intersect(first(s), r)
+    elseif step(s) < 0
+        intersect(r, reverse(s))
+    else
+        sta = first(s)
+        ste = step(s)
+        sto = last(s)
+        lo = first(r)
+        hi = last(r)
+        i0 = max(sta, lo + mod(sta - lo, ste))
+        i1 = min(sto, hi - mod(hi - sta, ste))
+        i0:ste:i1
+    end
 end
-intersect(r::Range, s::Range1) = intersect(s, r)
+
+function intersect{T1<:Integer, T2<:Integer}(r::Range{T1}, s::Range1{T2})
+    if step(r) == 0
+        first(s) <= first(r) <= last(s) ? r : Range(first(r), 0, 0)
+    elseif step(r) < 0
+        reverse(intersect(s, reverse(r)))
+    else
+        intersect(s, r)
+    end
+end
+
+function intersect{T1<:Integer, T2<:Integer}(r::Range{T1}, s::Range{T2})
+    if length(r) == 0 || length(s) == 0
+        return Range(first(r), step(r), 0)
+    elseif step(s) < 0
+        return intersect(r, reverse(s))
+    elseif step(r) < 0
+        return reverse(intersect(reverse(r), s))
+    end
+
+    start1 = first(r)
+    step1 = step(r)
+    stop1 = last(r)
+    start2 = first(s)
+    step2 = step(s)
+    stop2 = last(s)
+    a = lcm(step1, step2)
+
+    if a == 0
+        # One or both ranges have step 0.
+        if step1 == 0 && step2 == 0
+            return start1 == start2 ? r : Range(start1, 0, 0)
+        elseif step1 == 0
+            return start2 <= start1 <= stop2 && rem(start1 - start2, step2) == 0 ? r : Range(start1, 0, 0)
+        else
+            return start1 <= start2 <= stop1 && rem(start2 - start1, step1) == 0 ? (start2:step1:start2) : Range(start1, step1, 0)
+        end
+    end
+
+    g, x, y = gcdx(step1, step2)
+
+    if rem(start1 - start2, g) != 0
+        # Unaligned, no overlap possible.
+        return Range(start1, a, 0)
+    end
+
+    z = div(start1 - start2, g)
+    b = start1 - x * z * step1
+    # Possible points of the intersection of r and s are
+    # ..., b-2a, b-a, b, b+a, b+2a, ...
+    # Determine where in the sequence to start and stop.
+    m = max(start1 + mod(b - start1, a), start2 + mod(b - start2, a))
+    n = min(stop1 - mod(stop1 - b, a), stop2 - mod(stop2 - b, a))
+    m:a:n
+end
+
+function intersect(r::Ranges, s::Ranges...)
+    i = r
+    for t in s
+        i = intersect(i, t)
+    end
+    i
+end
+
+# findin (the index of intersection)
+function _findin{T1<:Integer, T2<:Integer}(r::Ranges{T1}, span::Range1{T2})
+    local ifirst
+    local ilast
+    fspan = first(span)
+    lspan = last(span)
+    fr = first(r)
+    lr = last(r)
+    sr = step(r)
+    if sr > 0
+        ifirst = fr >= fspan ? 1 : iceil((fspan-fr)/sr)+1
+        ilast = lr <= lspan ? length(r) : length(r) - iceil((lr-lspan)/sr)
+    elseif sr < 0
+        ifirst = fr <= lspan ? 1 : iceil((lspan-fr)/sr)+1
+        ilast = lr >= fspan ? length(r) : length(r) - iceil((lr-fspan)/sr)
+    else
+        ifirst = fr >= fspan ? 1 : length(r)+1
+        ilast = fr <= lspan ? length(r) : 0
+    end
+    ifirst, ilast
+end
+
+function findin{T1<:Integer, T2<:Integer}(r::Range1{T1}, span::Range1{T2})
+    ifirst, ilast = _findin(r, span)
+    ifirst:ilast
+end
+
+function findin{T1<:Integer, T2<:Integer}(r::Range{T1}, span::Range1{T2})
+    ifirst, ilast = _findin(r, span)
+    ifirst:1:ilast
+end
 
 ## linear operations on ranges ##
 
@@ -166,7 +345,7 @@ function ./(r::Ranges, s::Ranges)
     [ r[i]/s[i] for i = 1:length(r) ]
 end
 
-function .*(r::Ranges, s::Ranges)
+function .*{T<:Number,S<:Number}(r::Ranges{T}, s::Ranges{S})
     if length(r) != length(s)
         error("argument dimensions must match")
     end
@@ -175,7 +354,7 @@ end
 
 .^(x::Number, r::Ranges) = [ x^y for y=r ]
 .^(r::Ranges, y::Number) = [ x^y for x=r ]
-function .^(r::Ranges, s::Ranges)
+function .^{T<:Number,S<:Number}(r::Ranges{T}, s::Ranges{S})
     if length(r) != length(s)
         error("argument dimensions must match")
     end
@@ -189,11 +368,13 @@ function vcat{T}(r::Ranges{T})
     a = Array(T,n)
     i = 1
     for x in r
-        a[i] = x
+        @inbounds a[i] = x
         i += 1
     end
     return a
 end
+
+convert{T}(::Type{Array{T,1}}, r::Ranges{T}) = vcat(r)
 
 function vcat{T}(rs::Ranges{T}...)
     n = sum(length,rs)::Int
@@ -201,7 +382,7 @@ function vcat{T}(rs::Ranges{T}...)
     i = 1
     for r in rs
         for x in r
-            a[i] = x
+            @inbounds a[i] = x
             i += 1
         end
     end
@@ -213,26 +394,49 @@ reverse{T<:Real}(r::Ranges{T}) = Range(last(r), -step(r), r.len)
 ## sorting ##
 
 issorted(r::Range1) = true
-issorted(r::Range) = r.step > 0
+issorted(r::Ranges) = step(r) >= 0
 
 sort(r::Range1) = r
 sort!(r::Range1) = r
 
 sort{T<:Real}(r::Range{T}) = issorted(r) ? r : reverse(r)
 
-sortperm(r::Range1) = (r, 1:length(r))
-sortperm{T<:Real}(r::Range{T}) = issorted(r) ? (r, 1:1:length(r)) :
-                                               (reverse(r), length(r):-1:1)
+sortperm(r::Range1) = 1:length(r)
+sortperm{T<:Real}(r::Range{T}) = issorted(r) ? (1:1:length(r)) : (length(r):-1:1)
 
-function sum(r::Ranges)
+function sum{T<:Real}(r::Ranges{T})
     l = length(r)
     return l * first(r) + step(r) * div(l * (l - 1), 2)
 end
 
-function map_to(f, dest, r::Ranges)
+function map!(f::Callable, dest, r::Ranges)
     i = 1
     for ri in r dest[i] = f(ri); i+=1; end
     dest
 end
 
-map(f, r::Ranges) = [ f(x) for x in r ]
+function map_range_to!(f::Callable, first, dest, r::Ranges, state)
+    dest[1] = first
+    i = 2
+    while !done(r, state)
+        ri, state = next(r, state)
+        dest[i] = f(ri)
+        i += 1
+    end
+    dest
+end
+
+function map(f::Callable, r::Ranges)
+    if isempty(r); return {}; end
+    state = start(r)
+    (ri, state) = next(r, state)
+    first = f(ri)
+    map_range_to!(f, first, Array(typeof(first), length(r)), r, state)
+end
+
+function in(x, r::Ranges)
+    n = step(r) == 0 ? 1 : iround((x-first(r))/step(r))+1
+    n >= 1 && n <= length(r) && r[n] == x
+end
+
+in{T<:Integer}(x, r::Ranges{T}) = isinteger(x) && x>=minimum(r) && x<=maximum(r) && (step(r)==0 || mod(int(x)-first(r),step(r))==0)

@@ -22,7 +22,7 @@
 
 #include "dtypes.h"
 
-#ifdef WIN32
+#ifdef _OS_WINDOWS_
 #include <malloc.h>
 #define snprintf _snprintf
 #else
@@ -75,8 +75,11 @@ size_t u8_codingsize(uint32_t *wcstr, size_t n)
 {
     size_t i, c=0;
 
-    for(i=0; i < n; i++)
-        c += u8_charlen(wcstr[i]);
+    for(i=0; i < n; i++) {
+        size_t cl = u8_charlen(wcstr[i]);
+        if (cl == 0) cl = 3;  // invalid: encoded as replacement char
+        c += cl;
+    }
     return c;
 }
 
@@ -165,6 +168,14 @@ size_t u8_toutf8(char *dest, size_t sz, const uint32_t *src, size_t srcsz)
             *dest++ = ((ch>>6) & 0x3F) | 0x80;
             *dest++ = (ch & 0x3F) | 0x80;
         }
+        else {
+            if (dest >= dest_end-2)
+                break;
+            // invalid: use replacement char \ufffd
+            *dest++ = 0xef;
+            *dest++ = 0xbf;
+            *dest++ = 0xbd;
+        }
         i++;
     }
     return (dest-dest0);
@@ -194,7 +205,10 @@ size_t u8_wc_toutf8(char *dest, uint32_t ch)
         dest[3] = (ch & 0x3F) | 0x80;
         return 4;
     }
-    return 0;
+    dest[0] = 0xef;
+    dest[1] = 0xbf;
+    dest[2] = 0xbd;
+    return 3;
 }
 
 /* charnum => byte offset */
@@ -243,7 +257,9 @@ size_t u8_strlen(const char *s)
     return count;
 }
 
-extern int wcwidth(wchar_t c);
+#if defined(_OS_WINDOWS_) || defined(_OS_LINUX_)
+extern int wcwidth(uint32_t ch);
+#endif
 
 size_t u8_strwidth(const char *s)
 {
@@ -341,7 +357,7 @@ char read_escape_control_char(char c)
     else if (c == 'r')
         return '\r';
     else if (c == 'e')
-        return '\e';
+        return '\x1B';
     else if (c == 'b')
         return '\b';
     else if (c == 'f')
@@ -437,7 +453,7 @@ int u8_escape_wchar(char *buf, size_t sz, uint32_t ch)
         return buf_put2c(buf, "\\t");
     else if (ch == L'\r')
         return buf_put2c(buf, "\\r");
-    else if (ch == L'\e')
+    else if (ch == L'\x1B')
         return buf_put2c(buf, "\\e");
     else if (ch == L'\b')
         return buf_put2c(buf, "\\b");
@@ -597,7 +613,7 @@ size_t u8_vprintf(const char *fmt, va_list ap)
     sz = 512;
     buf = (char*)alloca(sz);
     cnt = vsnprintf(buf, sz, fmt, ap);
-    if ((ssize_t)cnt < 0)
+    if ((intptr_t)cnt < 0)
         return 0;
     if (cnt >= sz) {
         buf = (char*)malloc(cnt + 1);
@@ -692,7 +708,7 @@ int u8_isvalid(const char *str, size_t length)
     return ret;
 }
 
-int u8_reverse(char *dest, char * src, size_t len)
+int u8_reverse(char *dest, char *src, size_t len)
 {
     size_t si=0, di=len;
     unsigned char c;

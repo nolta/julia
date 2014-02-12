@@ -1,4 +1,4 @@
-type Rational{T<:Integer} <: Real
+immutable Rational{T<:Integer} <: Real
     num::T
     den::T
 
@@ -6,7 +6,7 @@ type Rational{T<:Integer} <: Real
         if num == 0 && den == 0
             error("invalid rational: 0//0")
         end
-        g = gcd(den, num)
+        g = den < 0 ? -gcd(den,num) : gcd(den, num)
         new(div(num, g), div(den, g))
     end
 end
@@ -27,7 +27,7 @@ function //(x::Complex, y::Complex)
     complex(real(xy)//yy, imag(xy)//yy)
 end
 
-function show(io, x::Rational)
+function show(io::IO, x::Rational)
     if isinf(x)
         print(io, x.num > 0 ? "Inf" : "-Inf")
     else
@@ -37,31 +37,52 @@ end
 
 convert{T<:Integer}(::Type{Rational{T}}, x::Rational) = Rational(convert(T,x.num),convert(T,x.den))
 convert{T<:Integer}(::Type{Rational{T}}, x::Integer) = Rational(convert(T,x), convert(T,1))
-function convert{T<:Integer}(::Type{Rational{T}}, x::FloatingPoint, tol::Real)
-    if isnan(x);       return zero(T)//zero(T); end
-    if x < typemin(T); return -one(T)//zero(T); end
-    if typemax(T) < x; return  one(T)//zero(T); end
-    y = x
-    a = d = one(T)
-    b = c = zero(T)
-    while true
-        f = convert(T,trunc(y)); y -= f
-        a, b, c, d = f*a+c, f*b+d, a, b
-        if y == 0 || abs(a/b-x) <= tol
-            return a//b
-        end
-        y = 1/y
-    end
-end
-convert{T<:Integer}(rt::Type{Rational{T}}, x::FloatingPoint) = convert(rt,x,0)
-convert(::Type{Bool}, x::Rational) = (x!=0)  # to resolve ambiguity
-convert{T<:Rational}(::Type{T}, x::Rational) = x
-convert{T<:Real}(::Type{T}, x::Rational) = convert(T, x.num/x.den)
 
-promote_rule{T<:Integer}(::Type{Rational{T}}, ::Type{T}) = Rational{T}
+convert(::Type{Rational}, x::Rational) = x
+convert(::Type{Rational}, x::Integer) = convert(Rational{typeof(x)},x)
+
+convert(::Type{Bool}, x::Rational) = (x!=0) # to resolve ambiguity
+convert{T<:Integer}(::Type{T}, x::Rational) = (isinteger(x) ? convert(T, x.num) : throw(InexactError()))
+convert{T<:FloatingPoint}(::Type{T}, x::Rational) = convert(T,x.num)/convert(T,x.den)
+
+function convert{T<:Integer}(::Type{Rational{T}}, x::FloatingPoint)
+    r = rationalize(T, x, tol=0)
+    x === convert(typeof(x), r) || throw(InexactError())
+    r
+end
+convert(::Type{Rational}, x::Float64) = convert(Rational{Int64}, x)
+convert(::Type{Rational}, x::Float32) = convert(Rational{Int}, x)
+
 promote_rule{T<:Integer,S<:Integer}(::Type{Rational{T}}, ::Type{S}) = Rational{promote_type(T,S)}
 promote_rule{T<:Integer,S<:Integer}(::Type{Rational{T}}, ::Type{Rational{S}}) = Rational{promote_type(T,S)}
 promote_rule{T<:Integer,S<:FloatingPoint}(::Type{Rational{T}}, ::Type{S}) = promote_type(T,S)
+
+function rationalize{T<:Integer}(::Type{T}, x::FloatingPoint; tol::Real=eps(x))
+    if isnan(x);       return zero(T)//zero(T); end
+    if x < typemin(T); return -one(T)//zero(T); end
+    if typemax(T) < x; return  one(T)//zero(T); end
+    tm = x < 0 ? typemin(T) : typemax(T)
+    z = x*tm
+    if z <= 0.5 return zero(T)//one(T) end
+    if z <= 1.0 return one(T)//tm end
+    y = x
+    a = d = 1
+    b = c = 0
+    while true
+        f = itrunc(y); y -= f
+        p, q = f*a+c, f*b+d
+        typemin(T) <= p <= typemax(T) &&
+        typemin(T) <= q <= typemax(T) || break
+        0 != sign(a)*sign(b) != sign(p)*sign(q) && break
+        a, b, c, d = p, q, a, b
+        if y == 0 || abs(a/b-x) <= tol
+            break
+        end
+        y = inv(y)
+    end
+    return convert(T,a)//convert(T,b)
+end
+rationalize(x::Union(Float64,Float32); tol::Real=eps(x)) = rationalize(Int, x, tol=tol)
 
 num(x::Integer) = x
 den(x::Integer) = one(x)
@@ -80,38 +101,47 @@ isfinite(x::Rational) = x.den != 0
 typemin{T<:Integer}(::Type{Rational{T}}) = -one(T)//zero(T)
 typemax{T<:Integer}(::Type{Rational{T}}) = one(T)//zero(T)
 
-integer_valued(x::Rational) = x.den == 1
-float64_valued(x::Rational) = abs(x.num) <= x.den*maxintfloat(Float64)
+isinteger(x::Rational) = x.den == 1
 
-hash(x::Rational) = integer_valued(x) ? hash(x.num) :
-                    float64_valued(x) ? hash(float64(x)) :
-                    bitmix(hash(x.num),hash(x.den))
+hash(x::Rational) = bitmix(hash(x.num), ~hash(x.den))
 
 -(x::Rational) = (-x.num) // x.den
-+(x::Rational, y::Rational) = (x.num*y.den + x.den*y.num) // (x.den*y.den)
--(x::Rational, y::Rational) = (x.num*y.den - x.den*y.num) // (x.den*y.den)
+for op in (:+, :-, :rem, :mod)
+    @eval begin
+        function ($op)(x::Rational, y::Rational)
+            g = gcd(x.den, y.den)
+            Rational(($op)(x.num * div(y.den, g), y.num * div(x.den, g)), x.den * div(y.den, g))
+        end
+    end
+end
 *(x::Rational, y::Rational) = (x.num*y.num) // (x.den*y.den)
 /(x::Rational, y::Rational) = (x.num*y.den) // (x.den*y.num)
-/(x::Rational, z::ComplexPair) = inv(z/x)
+/(x::Rational, z::Complex ) = inv(z/x)
 
-==(x::Rational, y::Rational) = x.den == y.den && x.num == y.num
-==(x::Rational, y::Integer ) = x.den == 1 && x.num == y
+==(x::Rational, y::Rational) = (x.den == y.den) & (x.num == y.num)
+==(x::Rational, y::Integer ) = (x.den == 1) & (x.num == y)
 ==(x::Integer , y::Rational) = y == x
 
 # needed to avoid ambiguity between ==(x::Real, z::Complex) and ==(x::Rational, y::Number)
-==(z::Complex , x::Rational) = real_valued(z) && real(z) == x
-==(x::Rational, z::Complex ) = real_valued(z) && real(z) == x
+==(z::Complex , x::Rational) = isreal(z) & (real(z) == x)
+==(x::Rational, z::Complex ) = isreal(z) & (real(z) == x)
 
-==(x::Rational, y::Number  ) = x.num == x.den*y
-==(x::Number  , y::Rational) = y == x
-==(x::Rational, y::FloatingPoint) = x.den==0 ? oftype(y,x)==y : x.num == x.den*y
+==(x::FloatingPoint, q::Rational) = ispow2(q.den) & (x == q.num/q.den) & (x*q.den == q.num)
+==(q::Rational, x::FloatingPoint) = ispow2(q.den) & (x == q.num/q.den) & (x*q.den == q.num)
 
-< (x::Rational, y::Rational) = x.den == y.den ? x.num < y.num : x.num*y.den < x.den*y.num
+# TODO: fix inequalities to be in line with equality check
+< (x::Rational, y::Rational) = x.den == y.den ? x.num < y.num :
+                               widemul(x.num,y.den) < widemul(x.den,y.num)
+< (x::Rational, y::Integer ) = x.num < widemul(x.den,y)
 < (x::Rational, y::Real    ) = x.num < x.den*y
+< (x::Integer , y::Rational) = widemul(x,y.den) < y.num
 < (x::Real    , y::Rational) = x*y.den < y.num
 
-<=(x::Rational, y::Rational) = x.den == y.den ? x.num <= y.num : x.num*y.den <= x.den*y.num
+<=(x::Rational, y::Rational) = x.den == y.den ? x.num <= y.num :
+                               widemul(x.num,y.den) <= widemul(x.den,y.num)
+<=(x::Rational, y::Integer ) = x.num <= widemul(x.den,y)
 <=(x::Rational, y::Real    ) = x.num <= x.den*y
+<=(x::Integer , y::Rational) = widemul(x,y.den) <= y.num
 <=(x::Real    , y::Rational) = x*y.den <= y.num
 
 div(x::Rational, y::Rational) = div(x.num*y.den, x.den*y.num)
@@ -132,16 +162,6 @@ floor(x::Rational) = Rational(ifloor(x))
 ceil (x::Rational) = Rational(iceil(x))
 round(x::Rational) = Rational(iround(x))
 
-rational(x::Real) = rational(x, 0)
-rational(x::Rational, tol::Real) = x
-rational(x::Integer) = x // one(x)
-rational(x::Integer, tol::Real) = x // one(x)
-rational(x::Float32, tol::Real) = convert(Rational{Int32}, x, tol)
-rational(x::Float64, tol::Real) = convert(Rational{Int64}, x, tol)
-rational(z::Complex) = complex(rational(real(z)), rational(imag(z)))
-rational(z::Complex, tol::Real) =
-    (tol /= sqrt(2); complex(rational(real(z), tol), rational(imag(z), tol)))
-
 ## rational to int coercion ##
 
 for f in (:int8, :int16, :int32, :int64, :int128,
@@ -150,12 +170,13 @@ for f in (:int8, :int16, :int32, :int64, :int128,
     @eval ($f)(x::Rational) = ($f)(iround(x))
 end
 
-function ^(x::Rational, y::Integer)
-    if y < 0
-        Rational(x.den^-y, x.num^-y)
-    else
-        Rational(x.num^y, x.den^y)
-    end
-end
+^(x::Rational, y::Integer) = y < 0 ?
+    Rational(x.den^-y, x.num^-y) : Rational(x.num^y, x.den^y)
 
 ^(x::Number, y::Rational) = x^(y.num/y.den)
+^{T<:FloatingPoint}(x::T, y::Rational) = x^(convert(T,y.num)/y.den)
+^{T<:FloatingPoint}(x::Complex{T}, y::Rational) = x^(convert(T,y.num)/y.den)
+
+^{T<:Rational}(z::Complex{T}, n::Bool) = n ? z : one(z) # to resolve ambiguity
+^{T<:Rational}(z::Complex{T}, n::Integer) =
+    n>=0 ? power_by_squaring(z,n) : power_by_squaring(inv(z),-n)

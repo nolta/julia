@@ -2,12 +2,16 @@
 
 abstract Associative{K,V}
 
-const _jl_secret_table_token = :__c782dbf1cf4d6a2e5e3865d7e95634f2e09b5902__
+const secret_table_token = :__c782dbf1cf4d6a2e5e3865d7e95634f2e09b5902__
 
-has(t::Associative, key) = !is(get(t, key, _jl_secret_table_token),
-                               _jl_secret_table_token)
+haskey(d::Associative, k) = in(k,keys(d))
 
-function show{K,V}(io, t::Associative{K,V})
+function in(p::(Any,Any), a::Associative)
+    v = get(a,p[1],secret_table_token)
+    !is(v, secret_table_token) && (v == p[2])
+end
+
+function show{K,V}(io::IO, t::Associative{K,V})
     if isempty(t)
         print(io, typeof(t),"()")
     else
@@ -29,35 +33,36 @@ function show{K,V}(io, t::Associative{K,V})
     end
 end
 
-function keys(T, a::Associative)
-    i = 0
-    keyz = Array(T,length(a))
-    for (k,v) in a
-        keyz[i+=1] = k
-    end
-    return keyz
+immutable KeyIterator{T<:Associative}
+    dict::T
 end
-keys{K,V}(a::Associative{K,V}) = keys(K,a)
+immutable ValueIterator{T<:Associative}
+    dict::T
+end
 
-function values(T, a::Associative)
-    i = 0
-    vals = Array(T,length(a))
-    for (k,v) in a
-        vals[i+=1] = v
-    end
-    return vals
-end
-values{K,V}(a::Associative{K,V}) = values(V,a)
+length(v::Union(KeyIterator,ValueIterator)) = length(v.dict)
+isempty(v::Union(KeyIterator,ValueIterator)) = isempty(v.dict)
+eltype(v::KeyIterator) = eltype(v.dict)[1]
+eltype(v::ValueIterator) = eltype(v.dict)[2]
 
-function pairs(T::(Union(Type,Tuple),Union(Type,Tuple)), a::Associative)
-    i = 0
-    pairz = Array(T,length(a))
-    for (k,v) in a
-        pairz[i+=1] = (k,v)
-    end
-    return pairz
+start(v::Union(KeyIterator,ValueIterator)) = start(v.dict)
+done(v::Union(KeyIterator,ValueIterator), state) = done(v.dict, state)
+
+function next(v::KeyIterator, state)
+    n = next(v.dict, state)
+    n[1][1], n[2]
 end
-pairs{K,V}(a::Associative{K,V}) = pairs((K,V),a)
+
+function next(v::ValueIterator, state)
+    n = next(v.dict, state)
+    n[1][2], n[2]
+end
+
+in(k, v::KeyIterator) = !is(get(v.dict, k, secret_table_token),
+                            secret_table_token)
+
+keys(a::Associative) = KeyIterator(a)
+values(a::Associative) = ValueIterator(a)
 
 function copy(a::Associative)
     b = similar(a)
@@ -80,47 +85,78 @@ merge(d::Associative, others::Associative...) = merge!(copy(d), others...)
 function filter!(f::Function, d::Associative)
     for (k,v) in d
         if !f(k,v)
-            del(d,k)
+            delete!(d,k)
         end
     end
     return d
 end
 filter(f::Function, d::Associative) = filter!(f,copy(d))
 
-# some support functions
+eltype{K,V}(a::Associative{K,V}) = (K,V)
 
-function _tablesz(i::Integer)
-    if i < 16
-        return 16
+function hash(d::Associative)
+    h::Uint = 0
+    for (k,v) in d
+        h $= bitmix(hash(k),~hash(v))
     end
-    if i&(i-1) == 0
-        return i
-    end
-    while (i&(i-1) != 0)
-        i = i&(i-1)
-    end
-    return i<<1
+    h
 end
 
-function ref(t::Associative, key)
-    v = get(t, key, _jl_secret_table_token)
-    if is(v,_jl_secret_table_token)
+function isequal(l::Associative, r::Associative)
+    if isa(l,ObjectIdDict) != isa(r,ObjectIdDict)
+        return false
+    end
+    if length(l) != length(r) return false end
+    for (key, value) in l
+        if !isequal(value, get(r, key, secret_table_token))
+            return false
+        end
+    end
+    true
+end
+
+function ==(l::Associative, r::Associative)
+    if isa(l,ObjectIdDict) != isa(r,ObjectIdDict)
+        return false
+    end
+    if length(l) != length(r) return false end
+    for (key, value) in l
+        if value != get(r, key, secret_table_token)
+            return false
+        end
+    end
+    true
+end
+
+# some support functions
+
+_tablesz(x::Integer) = x < 16 ? 16 : one(x)<<((sizeof(x)<<3)-leading_zeros(x-1))
+
+function getindex(t::Associative, key)
+    v = get(t, key, secret_table_token)
+    if is(v, secret_table_token)
         throw(KeyError(key))
     end
     return v
 end
 
+# t[k1,k2,ks...] is syntactic sugar for t[(k1,k2,ks...)].  (Note
+# that we need to avoid dispatch loops if setindex!(t,v,k) is not defined.)
+getindex(t::Associative, k1, k2, ks...) = getindex(t, tuple(k1,k2,ks...))
+setindex!(t::Associative, v, k1, k2, ks...) = setindex!(t, v, tuple(k1,k2,ks...))
+
+push!(t::Associative, key, v) = setindex!(t, v, key)
+
 # hashing objects by identity
 
 type ObjectIdDict <: Associative{Any,Any}
     ht::Array{Any,1}
-    ObjectIdDict(sz::Integer) = new(cell(2*_tablesz(sz)))
-    ObjectIdDict() = ObjectIdDict(0)
+    ObjectIdDict() = new(cell(32))
 end
 
 similar(d::ObjectIdDict) = ObjectIdDict()
 
-function assign(t::ObjectIdDict, v::ANY, k::ANY)
+function setindex!(t::ObjectIdDict, v::ANY, k::ANY)
     t.ht = ccall(:jl_eqtable_put, Array{Any,1}, (Any, Any, Any), t.ht, k, v)
     return t
 end
@@ -128,10 +164,20 @@ end
 get(t::ObjectIdDict, key::ANY, default::ANY) =
     ccall(:jl_eqtable_get, Any, (Any, Any, Any), t.ht, key, default)
 
-del(t::ObjectIdDict, key::ANY) =
-    (ccall(:jl_eqtable_del, Int32, (Any, Any), t.ht, key); t)
+pop!(t::ObjectIdDict, key::ANY, default::ANY) =
+    ccall(:jl_eqtable_pop, Any, (Any, Any, Any), t.ht, key, default)
 
-del_all(t::ObjectIdDict) = (t.ht = cell(length(t.ht)); t)
+function pop!(t::ObjectIdDict, key::ANY)
+    val = pop!(t, key, secret_table_token)
+    !is(val,secret_table_token) ? val : throw(KeyError(key))
+end
+
+function delete!(t::ObjectIdDict, key::ANY)
+    ccall(:jl_eqtable_pop, Any, (Any, Any), t.ht, key)
+    t
+end
+
+empty!(t::ObjectIdDict) = (t.ht = cell(length(t.ht)); t)
 
 start(t::ObjectIdDict) = 0
 done(t::ObjectIdDict, i) = is(next(t,i),())
@@ -151,7 +197,7 @@ end
 
 bitmix(a::Union(Int32,Uint32), b::Union(Int32,Uint32)) =
     ccall(:int64to32hash, Uint32, (Uint64,),
-          or_int(shl_int(zext64(unbox(Uint32,a)), 32), zext64(unbox(Uint32,b))))
+          or_int(shl_int(zext_int(Uint64,unbox(Uint32,a)), 32), zext_int(Uint64,unbox(Uint32,b))))
 
 bitmix(a::Union(Int64,Uint64), b::Union(Int64, Uint64)) =
     ccall(:int64hash, Uint64, (Uint64,),
@@ -159,51 +205,54 @@ bitmix(a::Union(Int64,Uint64), b::Union(Int64, Uint64)) =
                                            shl_int(unbox(Uint64,b), 32))))
 
 if WORD_SIZE == 64
-    _jl_hash64(x::Float64) =
+    hash64(x::Float64) =
         ccall(:int64hash, Uint64, (Uint64,), box(Uint64,unbox(Float64,x)))
-    _jl_hash64(x::Union(Int64,Uint64)) =
+    hash64(x::Union(Int64,Uint64)) =
         ccall(:int64hash, Uint64, (Uint64,), x)
 else
-    _jl_hash64(x::Float64) =
+    hash64(x::Float64) =
         ccall(:int64to32hash, Uint32, (Uint64,), box(Uint64,unbox(Float64,x)))
-    _jl_hash64(x::Union(Int64,Uint64)) =
+    hash64(x::Union(Int64,Uint64)) =
         ccall(:int64to32hash, Uint32, (Uint64,), x)
 end
 
-hash(x::Integer) = _jl_hash64(uint64(x))
-@eval function hash(x::FloatingPoint)
-    if trunc(x) == x
-        # hash as integer if equal to some integer. note the result of
-        # float to int conversion is only defined for in-range values.
-        if x < 0
-            if $(float64(typemin(Int64))) <= x
-                return hash(int64(x))
-            end
-        else
-            # note: float64(typemax(Uint64)) == 2^64
-            if x < $(float64(typemax(Uint64)))
-                return hash(uint64(x))
-            end
-        end
+hash(x::Union(Bool,Char,Int8,Uint8,Int16,Uint16,Int32,Uint32,Int64,Uint64)) =
+    hash64(uint64(x))
+
+function hash(x::Integer)
+    h::Uint = hash(uint64(x&0xffffffffffffffff))
+    if typemin(Int64) <= x <= typemax(Uint64)
+        return h
     end
-    isnan(x) ? $(_jl_hash64(NaN)) : _jl_hash64(float64(x))
+    x >>>= 64
+    while x != 0 && x != -1
+        h = bitmix(h, hash(uint64(x&0xffffffffffffffff)))
+        x >>>= 64
+    end
+    return h
 end
+
+hash(x::Float32) = hash(reinterpret(Uint32, isnan(x) ? NaN32 : x))
+hash(x::Float64) = hash(reinterpret(Uint64, isnan(x) ? NaN   : x))
 
 function hash(t::Tuple)
-    h = int(0)
+    h::Uint = 0
     for i=1:length(t)
-        h = bitmix(h,int(hash(t[i])))
+        h = bitmix(h,int(hash(t[i]))+42)
     end
-    return uint(h)
+    return h
 end
 
-function hash(a::Array)
-    h = hash(size(a))+1
+function hash(a::AbstractArray)
+    h::Uint = hash(size(a))+1
     for i=1:length(a)
         h = bitmix(h,int(hash(a[i])))
     end
-    return uint(h)
+    return h
 end
+
+# make sure Array{Bool} and BitArray can be equivalent
+hash(a::AbstractArray{Bool}) = hash(bitpack(a))
 
 hash(x::ANY) = object_id(x)
 
@@ -221,6 +270,10 @@ else
               s.data, length(s.data), uint32(seed))
 end
 
+hash(s::String) = hash(bytestring(s))
+
+hash(x::Expr) = bitmix(hash(x.head),hash(x.args)+43)
+
 
 # dict
 
@@ -232,22 +285,28 @@ type Dict{K,V} <: Associative{K,V}
     count::Int
     deleter::Function
 
-    Dict() = Dict{K,V}(0)
-    function Dict(n::Integer)
-        n = _tablesz(n)
+    function Dict()
+        n = 16
         new(zeros(Uint8,n), Array(K,n), Array(V,n), 0, 0, identity)
     end
     function Dict(ks, vs)
-        n = length(ks)
-        h = Dict{K,V}(n)
+        # TODO: eventually replace with a call to Dict(zip(ks,vs))
+        n = min(length(ks), length(vs))
+        h = Dict{K,V}()
         for i=1:n
             h[ks[i]] = vs[i]
         end
         return h
     end
+    function Dict(kv)
+        h = Dict{K,V}()
+        for (k,v) in kv
+            h[k] = v
+        end
+        return h
+    end
 end
-Dict() = Dict(0)
-Dict(n::Integer) = Dict{Any,Any}(n)
+Dict() = Dict{Any,Any}()
 
 Dict{K,V}(ks::AbstractArray{K}, vs::AbstractArray{V}) = Dict{K,V}(ks,vs)
 Dict(ks, vs) = Dict{Any,Any}(ks, vs)
@@ -256,6 +315,8 @@ Dict(ks, vs) = Dict{Any,Any}(ks, vs)
 Dict{K,V}(ks::(K...), vs::(V...)) = Dict{K  ,V  }(ks, vs)
 Dict{K  }(ks::(K...), vs::Tuple ) = Dict{K  ,Any}(ks, vs)
 Dict{V  }(ks::Tuple , vs::(V...)) = Dict{Any,V  }(ks, vs)
+
+Dict{K,V}(kv::AbstractArray{(K,V)}) = Dict{K,V}(kv)
 
 similar{K,V}(d::Dict{K,V}) = (K=>V)[]
 
@@ -270,10 +331,10 @@ end
 
 function deserialize{K,V}(s, T::Type{Dict{K,V}})
     n = read(s, Int32)
-    t = T(n)
+    t = T(); sizehint(t, n)
     for i = 1:n
-        k = force(deserialize(s))
-        v = force(deserialize(s))
+        k = deserialize(s)
+        v = deserialize(s)
         t[k] = v
     end
     return t
@@ -291,29 +352,64 @@ function rehash{K,V}(h::Dict{K,V}, newsz)
     oldv = h.vals
     sz = length(olds)
     newsz = _tablesz(newsz)
-    h.slots = zeros(Uint8,newsz)
-    h.keys = Array(K, newsz)
-    h.vals = Array(V, newsz)
-    h.ndel = h.count = 0
+    if h.count == 0
+        resize!(h.slots, newsz)
+        fill!(h.slots, 0)
+        resize!(h.keys, newsz)
+        resize!(h.vals, newsz)
+        h.ndel = 0
+        return h
+    end
+
+    slots = zeros(Uint8,newsz)
+    keys = Array(K, newsz)
+    vals = Array(V, newsz)
+    count0 = h.count
+    count = 0
 
     for i = 1:sz
         if olds[i] == 0x1
             k = oldk[i]
+            v = oldv[i]
             index = hashindex(k, newsz)
-            while h.slots[index] != 0
+            while slots[index] != 0
                 index = (index & (newsz-1)) + 1
             end
-            h.slots[index] = 0x1
-            h.keys[index] = k
-            h.vals[index] = oldv[i]
-            h.count += 1
+            slots[index] = 0x1
+            keys[index] = k
+            vals[index] = v
+            count += 1
+
+            if h.count != count0
+                # if items are removed by finalizers, retry
+                return rehash(h, newsz)
+            end
         end
     end
+
+    h.slots = slots
+    h.keys = keys
+    h.vals = vals
+    h.count = count
+    h.ndel = 0
 
     return h
 end
 
-function del_all{K,V}(h::Dict{K,V})
+function sizehint(d::Dict, newsz)
+    oldsz = length(d.slots)
+    if newsz <= oldsz
+        # todo: shrink
+        # be careful: rehash() assumes everything fits. it was only designed
+        # for growing.
+        return d
+    end
+    # grow at least 25%
+    newsz = max(newsz, (oldsz*5)>>2)
+    rehash(d, newsz)
+end
+
+function empty!{K,V}(h::Dict{K,V})
     fill!(h.slots, 0x0)
     sz = length(h.slots)
     h.keys = Array(K, sz)
@@ -323,75 +419,12 @@ function del_all{K,V}(h::Dict{K,V})
     return h
 end
 
-function assign{K,V}(h::Dict{K,V}, v, key)
-    key = convert(K,key)
-
-    sz = length(h.keys)
-
-    if h.ndel >= ((3*sz)>>2) || h.count*3 > sz*2
-        # > 3/4 deleted or > 2/3 full
-        rehash(h, h.count > 64000 ? h.count*2 : h.count*4)
-        sz = length(h.keys)  # rehash may resize the table at this point!
-    end
-
-    iter = 0
-    maxprobe = max(16, sz>>6)
-    index = hashindex(key, sz)
-    orig = index
-    avail = -1  # an available slot
-    keys = h.keys; vals = h.vals
-
-    while true
-        if isslotempty(h,index)
-            if avail > 0; index = avail; end
-            h.slots[index] = 0x1
-            h.keys[index] = key
-            h.vals[index] = v
-            h.count += 1
-            return h
-        end
-
-        if isslotmissing(h,index)
-            if avail<0
-                # found an available slot, but need to keep scanning
-                # in case "key" already exists in a later collided slot.
-                avail = index
-            end
-        elseif isequal(key, keys[index])
-            vals[index] = v
-            return h
-        end
-
-        index = (index & (sz-1)) + 1
-        iter+=1
-        if iter > maxprobe || index==orig
-            break
-        end
-    end
-
-    if avail>0
-        index = avail
-        h.slots[index] = 0x1
-        h.keys[index] = key
-        h.vals[index] = v
-        h.count += 1
-        return h
-    end
-
-    rehash(h, h.count > 64000 ? sz*2 : sz*4)
-
-    assign(h, v, key)
-end
-
 # get the index where a key is stored, or -1 if not present
 function ht_keyindex{K,V}(h::Dict{K,V}, key)
-    key = convert(K,key)
-
     sz = length(h.keys)
     iter = 0
     maxprobe = max(16, sz>>6)
     index = hashindex(key, sz)
-    orig = index
     keys = h.keys
 
     while true
@@ -404,15 +437,114 @@ function ht_keyindex{K,V}(h::Dict{K,V}, key)
 
         index = (index & (sz-1)) + 1
         iter+=1
-        if iter > maxprobe || index==orig
-            break
-        end
+        iter > maxprobe && break
     end
 
     return -1
 end
 
-function ref{K,V}(h::Dict{K,V}, key)
+# get the index where a key is stored, or -pos if not present
+# and the key would be inserted at pos
+# This version is for use by setindex! and get!
+function ht_keyindex2{K,V}(h::Dict{K,V}, key)
+    sz = length(h.keys)
+
+    if h.ndel >= ((3*sz)>>2) || h.count*3 > sz*2
+        # > 3/4 deleted or > 2/3 full
+        rehash(h, h.count > 64000 ? h.count*2 : h.count*4)
+        sz = length(h.keys)  # rehash may resize the table at this point!
+    end
+
+    iter = 0
+    maxprobe = max(16, sz>>6)
+    index = hashindex(key, sz)
+    avail = 0
+    keys = h.keys
+
+    while true
+        if isslotempty(h,index)
+            avail < 0 && return avail
+            return -index
+        end
+
+        if isslotmissing(h,index)
+            if avail == 0
+                # found an available slot, but need to keep scanning
+                # in case "key" already exists in a later collided slot.
+                avail = -index
+            end
+        elseif isequal(key, keys[index])
+            return index
+        end
+
+        index = (index & (sz-1)) + 1
+        iter+=1
+        iter > maxprobe && break
+    end
+
+    avail < 0 && return avail
+
+    rehash(h, h.count > 64000 ? sz*2 : sz*4)
+
+    return ht_keyindex2(h, key)
+end
+
+function _setindex!(h::Dict, v, key, index)
+    h.slots[index] = 0x1
+    h.keys[index] = key
+    h.vals[index] = v
+    h.count += 1
+end
+
+function setindex!{K,V}(h::Dict{K,V}, v0, key0)
+    key = convert(K,key0)
+    if !isequal(key,key0)
+        error(key0, " is not a valid key for type ", K)
+    end
+    v = convert(V,  v0)
+
+    index = ht_keyindex2(h, key)
+
+    if index > 0
+        h.vals[index] = v
+    else
+        _setindex!(h, v, key, -index)
+    end
+
+    return h
+end
+
+function get!{K,V}(h::Dict{K,V}, key0, default)
+    key = convert(K,key0)
+    if !isequal(key,key0)
+        error(key0, " is not a valid key for type ", K)
+    end
+
+    index = ht_keyindex2(h, key)
+
+    index > 0 && return h.vals[index]
+
+    v = convert(V,  default)
+    _setindex!(h, v, key, -index)
+    return v
+end
+
+function get!{K,V}(default::Function, h::Dict{K,V}, key0)
+    key = convert(K,key0)
+    if !isequal(key,key0)
+        error(key0, " is not a valid key for type ", K)
+    end
+
+    index = ht_keyindex2(h, key)
+
+    index > 0 && return h.vals[index]
+
+    v = convert(V,  default())
+    _setindex!(h, v, key, -index)
+    return v
+end
+
+function getindex{K,V}(h::Dict{K,V}, key)
     index = ht_keyindex(h, key)
     return (index<0) ? throw(KeyError(key)) : h.vals[index]::V
 end
@@ -422,24 +554,48 @@ function get{K,V}(h::Dict{K,V}, key, deflt)
     return (index<0) ? deflt : h.vals[index]::V
 end
 
-has(h::Dict, key) = (ht_keyindex(h, key) >= 0)
+function get{K,V}(deflt::Function, h::Dict{K,V}, key)
+    index = ht_keyindex(h, key)
+    return (index<0) ? deflt() : h.vals[index]::V
+end
 
-function key{K,V}(h::Dict{K,V}, key, deflt)
+haskey(h::Dict, key) = (ht_keyindex(h, key) >= 0)
+in{T<:Dict}(key, v::KeyIterator{T}) = (ht_keyindex(v.dict, key) >= 0)
+
+function getkey{K,V}(h::Dict{K,V}, key, deflt)
     index = ht_keyindex(h, key)
     return (index<0) ? deflt : h.keys[index]::K
 end
 
-function del(h::Dict, key)
+function _pop!(h::Dict, index)
+    val = h.vals[index]
+    _delete!(h, index)
+    return val
+end
+
+function pop!(h::Dict, key)
     index = ht_keyindex(h, key)
-    if index > 0
-        h.slots[index] = 0x2
-        ccall(:jl_arrayunset, Void, (Any, Uint), h.keys, index-1)
-        ccall(:jl_arrayunset, Void, (Any, Uint), h.vals, index-1)
-        h.ndel += 1
-        h.count -= 1
-        return h
-    end
-    throw(KeyError(key))
+    index > 0 ? _pop!(h, index) : throw(KeyError(key))
+end
+
+function pop!(h::Dict, key, default)
+    index = ht_keyindex(h, key)
+    index > 0 ? _pop!(h, index) : default
+end
+
+function _delete!(h::Dict, index)
+    h.slots[index] = 0x2
+    ccall(:jl_arrayunset, Void, (Any, Uint), h.keys, index-1)
+    ccall(:jl_arrayunset, Void, (Any, Uint), h.vals, index-1)
+    h.ndel += 1
+    h.count -= 1
+    h
+end
+
+function delete!(h::Dict, key)
+    index = ht_keyindex(h, key)
+    if index > 0; _delete!(h, index); end
+    h
 end
 
 function skip_deleted(h::Dict, i)
@@ -457,37 +613,42 @@ next(t::Dict, i) = ((t.keys[i],t.vals[i]), skip_deleted(t,i+1))
 isempty(t::Dict) = (t.count == 0)
 length(t::Dict) = t.count
 
-# Used as default value arg to get in isequal: something that will
-# never be found in any dictionary.
-const _MISSING = gensym()
-
-function isequal(l::Dict, r::Dict)
-    if ! (length(l) == length(r))  return false end
-    for (key, value) in l
-        if ! isequal(value, get(r, key, _MISSING))
-            return false
-        end
-    end
-    true
-end
+next{T<:Dict}(v::KeyIterator{T}, i) = (v.dict.keys[i], skip_deleted(v.dict,i+1))
+next{T<:Dict}(v::ValueIterator{T}, i) = (v.dict.vals[i], skip_deleted(v.dict,i+1))
 
 # weak key dictionaries
 
+function weak_key_delete!(t::Dict, k)
+    # when a weak key is finalized, remove from dictionary if it is still there
+    wk = getkey(t, k, secret_table_token)
+    if !is(wk,secret_table_token) && is(wk.value, k)
+        delete!(t, k)
+    end
+end
+
 function add_weak_key(t::Dict, k, v)
     if is(t.deleter, identity)
-        t.deleter = x->del(t, x)
+        t.deleter = x->weak_key_delete!(t, x)
     end
     t[WeakRef(k)] = v
     # TODO: it might be better to avoid the finalizer, allow
     # wiped WeakRefs to remain in the table, and delete them as
-    # they are discovered by ref and assign.
+    # they are discovered by getindex and setindex!.
     finalizer(k, t.deleter)
     return t
 end
 
+function weak_value_delete!(t::Dict, k, v)
+    # when a weak value is finalized, remove from dictionary if it is still there
+    wv = get(t, k, secret_table_token)
+    if !is(wv,secret_table_token) && is(wv.value, v)
+        delete!(t, k)
+    end
+end
+
 function add_weak_value(t::Dict, k, v)
     t[k] = WeakRef(v)
-    finalizer(v, x->del(t, k))
+    finalizer(v, x->weak_value_delete!(t, k, x))
     return t
 end
 
@@ -498,21 +659,26 @@ type WeakKeyDict{K,V} <: Associative{K,V}
 end
 WeakKeyDict() = WeakKeyDict{Any,Any}()
 
-assign{K}(wkh::WeakKeyDict{K}, v, key) = add_weak_key(wkh.ht, convert(K,key), v)
+setindex!{K}(wkh::WeakKeyDict{K}, v, key) = add_weak_key(wkh.ht, convert(K,key), v)
 
-function key{K}(wkh::WeakKeyDict{K}, kk, deflt)
-    k = key(wkh.ht, convert(K,kk), _jl_secret_table_token)
-    if is(k, _jl_secret_table_token)
+function getkey{K}(wkh::WeakKeyDict{K}, kk, deflt)
+    k = getkey(wkh.ht, kk, secret_table_token)
+    if is(k, secret_table_token)
         return deflt
     end
     return k.value::K
 end
 
-get{K}(wkh::WeakKeyDict{K}, key, deflt) = get(wkh.ht, convert(K,key), deflt)
-del{K}(wkh::WeakKeyDict{K}, key) = del(wkh.ht, convert(K,key))
-del_all(wkh::WeakKeyDict)  = (del_all(wkh.ht); wkh)
-has{K}(wkh::WeakKeyDict{K}, key) = has(wkh.ht, convert(K,key))
-ref{K}(wkh::WeakKeyDict{K}, key) = ref(wkh.ht, convert(K,key))
+get{K}(wkh::WeakKeyDict{K}, key, def) = get(wkh.ht, key, def)
+get{K}(def::Function, wkh::WeakKeyDict{K}, key) = get(def, wkh.ht, key)
+get!{K}(wkh::WeakKeyDict{K}, key, def) = get!(wkh.ht, key, def)
+get!{K}(def::Function, wkh::WeakKeyDict{K}, key) = get!(def, wkh.ht, key)
+pop!{K}(wkh::WeakKeyDict{K}, key) = pop!(wkh.ht, key)
+pop!{K}(wkh::WeakKeyDict{K}, key, def) = pop!(wkh.ht, key, def)
+delete!{K}(wkh::WeakKeyDict{K}, key) = delete!(wkh.ht, key)
+empty!(wkh::WeakKeyDict)  = (empty!(wkh.ht); wkh)
+haskey{K}(wkh::WeakKeyDict{K}, key) = haskey(wkh.ht, key)
+getindex{K}(wkh::WeakKeyDict{K}, key) = getindex(wkh.ht, key)
 isempty(wkh::WeakKeyDict) = isempty(wkh.ht)
 
 start(t::WeakKeyDict) = start(t.ht)
@@ -522,4 +688,3 @@ function next{K}(t::WeakKeyDict{K}, i)
     ((kv[1].value::K,kv[2]), i)
 end
 length(t::WeakKeyDict) = length(t.ht)
-

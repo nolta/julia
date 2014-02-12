@@ -1,32 +1,29 @@
-JULIAHOME = ..
+JULIAHOME = $(abspath ..)
 include ../Make.inc
 
-default all extra unicode gzip::
-	@$(MAKE) -sC unicode
+TESTS = all core keywordargs numbers strings unicode collections hashing	\
+	remote iobuffer arrayops linalg blas fft dsp sparse bitarray random	    \
+	math functional bigint sorting statistics spawn parallel arpack file	\
+	git pkg resolve suitesparse complex version pollfd mpfr	broadcast       \
+	socket floatapprox priorityqueue readdlm regex float16 combinatorics    \
+	sysinfo rounding ranges mod2pi euler show
 
-TESTS = default all extra \
-core numbers strings unicode corelib hashing \
-arrayops linalg fft sparse arpack bitarray \
-random math functional bigint dists combinatorics statistics \
-glpk linprog bigfloat poly file Rmath remote zlib sound image \
-iterators gzip
+default: all
 
 $(TESTS) ::
-	$(QUIET_JULIA) $(JULIA_EXECUTABLE) ./runtests.jl $@
+	@$(call PRINT_JULIA, $(call spawn,$(JULIA_EXECUTABLE)) ./runtests.jl $@)
 
 perf:
-ifneq ($(MAKECMDGOALS),perf)
-	$(QUIET_JULIA) $(JULIA_EXECUTABLE) perf/$@.jl
-else
-	@$(JULIA_EXECUTABLE) perf/$@.jl | perl -nle '@_=split/,/; printf "%-14s %7.3f\n", $$_[1], $$_[2]'
-endif
-
-benchmark:
-	@$(MAKE) -C perf $@
+	@$(MAKE) -C perf all
 
 clean:
-	@$(MAKE) -C unicode $@
 	@$(MAKE) -C perf $@
+	-rm -f libccalltest.$(SHLIB_EXT) ccalltest
 
-.PHONY: $(TESTS) perf benchmark clean
+.PHONY: $(TESTS) perf clean
 
+libccalltest.$(SHLIB_EXT): ccalltest.c
+	$(CC) $(CFLAGS) $(DEBUGFLAGS) -O3 $< -fPIC -shared -o $@ $(LDFLAGS) -DCC=$(CC)
+
+ccalltest: ccalltest.c
+	$(CC) $(CFLAGS) $(DEBUGFLAGS) -O3 $< -o $@ $(LDFLAGS) -DCC=$(CC)

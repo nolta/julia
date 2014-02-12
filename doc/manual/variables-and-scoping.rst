@@ -1,14 +1,8 @@
 .. _man-variables-and-scoping:
 
-***********************
- Variables and Scoping  
-***********************
-
-Until now, we have simply used variables without any explanation.
-Julia's usage of variables closely resembles that of other dynamic
-languages, so we have hopefully gotten away with this liberty. In what
-follows, however, we address this oversight and provide details of how
-variables are used, declared, and scoped in Julia.
+********************
+ Scope of Variables
+********************
 
 The *scope* of a variable is the region of code within which a variable
 is visible. Variable scoping helps avoid variable naming conflicts. The
@@ -22,10 +16,10 @@ rules; this section spells them out in detail.
 Certain constructs in the language introduce *scope blocks*, which are
 regions of code that are eligible to be the scope of some set of
 variables. The scope of a variable cannot be an arbitrary set of source
-lines, but will always line up with one of these blocks. The constructs
-introducing such blocks are:
+lines; instead, it will always line up with one of these blocks.
+The constructs introducing such blocks are:
 
--  ``function`` bodies (either syntax)
+-  ``function`` bodies (:ref:`either syntax <man-functions>`)
 -  ``while`` loops
 -  ``for`` loops
 -  ``try`` blocks
@@ -35,7 +29,7 @@ introducing such blocks are:
 
 Notably missing from this list are
 :ref:`begin blocks <man-compound-expressions>`, which do
-*not* introduce a new scope block.
+*not* introduce new scope blocks.
 
 Certain constructs introduce new variables into the current innermost
 scope. When a variable is introduced into a scope, it is also inherited
@@ -43,17 +37,17 @@ by all inner scopes unless one of those inner scopes explicitly
 overrides it. These constructs which introduce new variables into the
 current scope are as follows:
 
--  A declaration ``local x`` introduces a new local variable.
+-  A declaration ``local x`` or ``const x`` introduces a new local variable.
 -  A declaration ``global x`` makes ``x`` in the current scope and inner
    scopes refer to the global variable of that name.
 -  A function's arguments are introduced as new local variables into the
    function's body scope.
 -  An assignment ``x = y`` introduces a new local variable ``x`` only if
    ``x`` is neither declared global nor explicitly introduced as local
-   by any enclosing scope, before or *after* the current line of code.
+   by any enclosing scope before *or after* the current line of code.
 
 In the following example, there is only one ``x`` assigned both inside
-and outside a loop::
+and outside the ``for`` loop::
 
     function foo(n)
       x = 0
@@ -97,15 +91,15 @@ a global variable ``x``)::
 
 A variable that is not assigned to or otherwise introduced locally
 defaults to global, so this function would return the value of the
-global ``x`` if there is such a variable, or produce an error if no such
-global exists. As a consequence, the only way to assign to a global
+global ``x`` if there were such a variable, or produce an error if no such
+global existed. As a consequence, the only way to assign to a global
 variable inside a non-top-level scope is to explicitly declare the
 variable as global within some scope, since otherwise the assignment
 would introduce a new local rather than assigning to the global. This
 rule works out well in practice, since the vast majority of variables
 assigned inside functions are intended to be local variables, and using
 global variables should be the exception rather than the rule,
-especially assigning new values to them.
+and assigning new values to them even more so.
 
 One last example shows that an outer assignment introducing ``x`` need
 not come before an inner usage::
@@ -119,14 +113,14 @@ not come before an inner usage::
     julia> foo(10)
     13
 
-This last example may seem slightly odd for a normal variable, but
-allows for named functions — which are just normal variables holding
-function objects — to be used before they are defined. This allows
-functions to be defined in whatever order is intuitive and convenient,
-rather than forcing bottom up ordering or requiring forward
-declarations, both of which one typically sees in C programs. As an
-example, here is an inefficient, mutually recursive way to test if
-positive integers are even or odd::
+This behavior may seem slightly odd for a normal variable, but allows
+for named functions — which are just normal variables holding function
+objects — to be used before they are defined. This allows functions to
+be defined in whatever order is intuitive and convenient, rather than
+forcing bottom up ordering or requiring forward declarations, both of
+which one typically sees in C programs. As an example, here is an
+inefficient, mutually recursive way to test if positive integers are
+even or odd::
 
     even(n) = n == 0 ? true  :  odd(n-1)
     odd(n)  = n == 0 ? false : even(n-1)
@@ -148,12 +142,14 @@ declarations is necessary, and definitions can be ordered arbitrarily.
 At the interactive prompt, variable scope works the same way as anywhere
 else. The prompt behaves as if there is scope block wrapped around
 everything you type, except that this scope block is identified with the
-global scope. This is especially apparent in the case of assignments::
+global scope. This is especially evident in the case of assignments:
+
+.. doctest::
 
     julia> for i = 1:1; y = 10; end
 
     julia> y
-    y not defined
+    ERROR: y not defined
 
     julia> y = 0
     0
@@ -183,42 +179,37 @@ comma-separated series of assignments and variable names::
         code
     end
 
-Unlike local variable assignments, the assignments do not occur in
-order. Rather, all assignment right-hand sides are evaluated in the
-scope outside the ``let``, then the ``let`` variables are assigned
-"simultaneously". In this way, ``let`` operates like a function call.
-Indeed, the following code::
+The assignments are evaluated in order, with each right-hand side
+evaluated in the scope before the new variable on the left-hand side
+has been introduced. Therefore it makes sense to write something like
+``let x = x`` since the two ``x`` variables are distinct and have separate
+storage. Here is an example where the behavior of ``let`` is needed::
 
-    let a = b, c = d
-      body
-    end
-
-is equivalent to ``((a,c)->body)(b, d)``. Therefore it makes sense to
-write something like ``let x = x`` since the two ``x`` variables are
-distinct and have separate storage. Here is an example where the
-behavior of ``let`` is needed::
-
-    Fs = cell(2);
-    for i = 1:2
+    Fs = cell(2)
+    i = 1
+    while i <= 2
       Fs[i] = ()->i
+      i += 1
     end
 
     julia> Fs[1]()
-    2
+    3
 
     julia> Fs[2]()
-    2
+    3
 
 Here we create and store two closures that return variable ``i``.
 However, it is always the same variable ``i``, so the two closures
 behave identically. We can use ``let`` to create a new binding for
 ``i``::
 
-    Fs = cell(2);
-    for i = 1:2
+    Fs = cell(2)
+    i = 1
+    while i <= 2
       let i = i
         Fs[i] = ()->i
       end
+      i += 1
     end
 
     julia> Fs[1]()
@@ -227,9 +218,11 @@ behave identically. We can use ``let`` to create a new binding for
     julia> Fs[2]()
     2
 
-Since the ``begin`` construct does not introduce a new block, it can be
-useful to use the zero-argument ``let`` to just introduce a new scope
-block without creating any new bindings::
+Since the ``begin`` construct does not introduce a new scope, it can be
+useful to use a zero-argument ``let`` to just introduce a new scope
+block without creating any new bindings:
+
+.. doctest::
 
     julia> begin
              local x = 1
@@ -238,7 +231,7 @@ block without creating any new bindings::
              end
              x
            end
-    syntax error: local x declared twice
+    ERROR: syntax: local "x" declared twice
 
     julia> begin
              local x = 1
@@ -253,6 +246,39 @@ The first example is illegal because you cannot declare the same
 variable as local in the same scope twice. The second example is legal
 since the ``let`` introduces a new scope block, so the inner local ``x``
 is a different variable than the outer local ``x``.
+
+For Loops and Comprehensions
+----------------------------
+
+For loops and comprehensions have a special additional behavior: any
+new variables introduced in their body scopes are freshly allocated for
+each loop iteration. Therefore these constructs are similar to ``while``
+loops with ``let`` blocks inside::
+
+    Fs = cell(2)
+    for i = 1:2
+        Fs[i] = ()->i
+    end
+
+    julia> Fs[1]()
+    1
+
+    julia> Fs[2]()
+    2
+
+``for`` loops will reuse existing variables for iteration::
+
+    i = 0
+    for i = 1:3
+    end
+    i  # here equal to 3
+
+However, comprehensions do not do this, and always freshly allocate their
+iteration variables::
+
+    x = 0
+    [ x for x=1:3 ]
+    x  # here still equal to 0
 
 Constants
 ---------

@@ -1,4 +1,4 @@
-load("lru.jl")
+require("lru")
 
 const TestLRU = UnboundedLRU{ASCIIString, ASCIIString}()
 const TestBLRUs = BoundedLRU{ASCIIString, ASCIIString}(100)
@@ -22,7 +22,7 @@ for lru in (
             TestBLRUxl,
             )
     for n in nmax
-        del_all(lru)
+        empty!(lru)
         @printf("  %s, %d items\n", lru, n)
         print("    Simple eviction: ")
         for i in 1:n
@@ -38,13 +38,13 @@ for lru in (
 
         print("    Lookup, random access: ")
         for i in 1:n
-            str = get_str(randi(n))
-            if has(lru, str) # the bounded LRUs can have cache misses
+            str = get_str(rand(1:n))
+            if haskey(lru, str) # the bounded LRUs can have cache misses
                 blah = lru[str]
                 @assert lru.q[1].v == blah
             end
         end
         println("pass")
     end
-    del_all(lru)
+    empty!(lru)
 end

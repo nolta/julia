@@ -1,78 +1,32 @@
-JULIAHOME = ../..
-include $(JULIAHOME)/Make.inc
-include $(JULIAHOME)/deps/Versions.make
+JULIAHOME = $(abspath ../..)
+include ../../Make.inc
 
-default: benchmarks.html
+all: micro kernel cat shootout blas lapack sort spell
 
-export OMP_NUM_THREADS=1
-export GOTO_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
+micro kernel cat shootout blas lapack sort spell:
+	@$(MAKE) $(QUIET_MAKE) -C shootout
+ifneq ($(OS),WINNT)
+	@$(call spawn,$(JULIA_EXECUTABLE)) $@/perf.jl | perl -nle '@_=split/,/; printf "%-18s %8.3f %8.3f %8.3f %8.3f\n", $$_[1], $$_[2], $$_[3], $$_[4], $$_[5]'
+else
+	@$(call spawn,$(JULIA_EXECUTABLE)) $@/perf.jl 2> /dev/null
+endif
 
-perf.h:
-	echo '#include "$(JULIAHOME)/deps/openblas-$(OPENBLAS_VER)/cblas.h"' > $@
-	echo '#include "$(JULIAHOME)/deps/random/dsfmt-$(DSFMT_VER)/dSFMT.c"' >> $@
+codespeed:
+	@$(MAKE) $(QUIET_MAKE) -C shootout
+	@$(call spawn,$(JULIA_EXECUTABLE)) micro/perf.jl codespeed
+	@$(call spawn,$(JULIA_EXECUTABLE)) kernel/perf.jl codespeed
+	@$(call spawn,$(JULIA_EXECUTABLE)) shootout/perf.jl codespeed
+#	@$(call spawn,$(JULIA_EXECUTABLE)) cat/perf.jl codespeed
+#	@$(call spawn,$(JULIA_EXECUTABLE)) blas/perf.jl codespeed
+#	@$(call spawn,$(JULIA_EXECUTABLE)) lapack/perf.jl codespeed
+#	@$(call spawn,$(JULIA_EXECUTABLE)) sort/perf.jl codespeed
+	@$(call spawn,$(JULIA_EXECUTABLE)) spell/perf.jl codespeed
+	@$(call spawn,$(JULIA_EXECUTABLE)) report.jl
 
-bin/perf%: perf.cpp perf.h
-	$(CXX) -O$* $< -o $@ $(JULIAHOME)/deps/openblas-$(OPENBLAS_VER)/libopenblas.a -lpthread
-
-bin/fperf%: perf.f90
-	$(FC) -static-libgfortran -O$* -fexternal-blas $< -o $@ $(JULIAHOME)/deps/openblas-$(OPENBLAS_VER)/libopenblas.a -lpthread
-
-benchmarks/c.csv: \
-	benchmarks/c0.csv \
-	benchmarks/c1.csv \
-	benchmarks/c2.csv \
-	benchmarks/c3.csv
-	cat $^ > $@
-
-benchmarks/fortran.csv: \
-	benchmarks/fortran0.csv \
-	benchmarks/fortran1.csv \
-	benchmarks/fortran2.csv \
-	benchmarks/fortran3.csv
-	cat $^ > $@
-
-benchmarks/c%.csv: bin/perf%
-	for t in 1 2 3 4 5; do $<; done >$@
-
-benchmarks/fortran%.csv: bin/fperf%
-	for t in 1 2 3 4 5; do $<; done >$@
-
-benchmarks/julia.csv: perf.jl
-	for t in 1 2 3 4 5; do ../../julia $<; done >$@
-
-benchmarks/python.csv: perf.py
-	for t in 1 2 3 4 5; do python $<; done >$@
-
-benchmarks/matlab.csv: perf.m
-	for t in 1 2 3 4 5; do matlab -nosplash -nodesktop -nojvm -r 'perf;exit' 2>/dev/null | grep '^matlab,'; done >$@
-
-benchmarks/octave.csv: perf.m
-	for t in 1 2 3 4 5; do octave -q --eval perf 2>/dev/null; done >$@
-
-benchmarks/r.csv: perf.R
-	for t in 1 2 3 4 5; do cat $< | R --vanilla --slave 2>/dev/null; done >$@
-
-benchmarks/javascript.csv: perf.js
-	for t in 1 2 3 4 5; do node $<; done >$@
-
-BENCHMARKS = \
-	benchmarks/c.csv \
-	benchmarks/fortran.csv \
-	benchmarks/julia.csv \
-	benchmarks/python.csv \
-	benchmarks/matlab.csv \
-	benchmarks/octave.csv \
-	benchmarks/r.csv \
-	benchmarks/javascript.csv
-
-benchmarks.csv: bin/collect.pl $(BENCHMARKS)
-	$(QUIET_PERL) $^ >$@
-
-benchmarks.html: bin/table.pl benchmarks.csv
-	$(QUIET_PERL) $^ >$@
 
 clean:
-	@rm -rf bin/perf* bin/fperf* benchmarks/*.csv benchmarks.csv *.mod
+	rm -f *~
+	$(MAKE) -C micro $@
+	$(MAKE) -C shootout $@
 
-.PHONY: all perf clean
+.PHONY: micro kernel cat shootout blas lapack sort spell clean

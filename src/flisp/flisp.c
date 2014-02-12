@@ -42,11 +42,22 @@
 #include <locale.h>
 #include <limits.h>
 #include <errno.h>
-#include <math.h>
+
+#include "platform.h"
+
+#if defined(_OS_WINDOWS_) && !defined(_COMPILER_MINGW_)
+#include <malloc.h>
+char * basename(char *);
+char * dirname(char *);
+#else
 #include <libgen.h>
+#endif
+
 #include "libsupport.h"
 #include "flisp.h"
 #include "opcodes.h"
+
+#include "utf8proc.h"
 
 static char *builtin_names[] =
     { NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
@@ -101,7 +112,7 @@ static value_t NIL, LAMBDA, IF, TRYCATCH;
 static value_t BACKQUOTE, COMMA, COMMAAT, COMMADOT, FUNCTION;
 
 static value_t pairsym, symbolsym, fixnumsym, vectorsym, builtinsym, vu8sym;
-static value_t definesym, defmacrosym, forsym, labelsym, setqsym;
+static value_t definesym, defmacrosym, forsym, setqsym;
 static value_t tsym, Tsym, fsym, Fsym, booleansym, nullsym, evalsym, fnsym;
 // for reading characters
 static value_t nulsym, alarmsym, backspacesym, tabsym, linefeedsym, newlinesym;
@@ -244,17 +255,45 @@ SAFECAST_OP(string,char*,    cvalue_data)
 
 symbol_t *symtab = NULL;
 
-int fl_is_keyword_name(char *str, size_t len)
+int fl_is_keyword_name(const char *str, size_t len)
 {
-    return ((str[0] == ':' || str[len-1] == ':') && str[1] != '\0');
+    return len>1 && ((str[0] == ':' || str[len-1] == ':') && str[1] != '\0');
 }
 
-static symbol_t *mk_symbol(char *str)
+// return NFC-normalized UTF8-encoded version of s
+static const char *normalize(char *s)
+{
+    static size_t buflen = 0;
+    static void *buf = NULL; // persistent buffer (avoid repeated malloc/free)
+    // options equivalent to utf8proc_NFC:
+    const int options = UTF8PROC_NULLTERM|UTF8PROC_STABLE|UTF8PROC_COMPOSE;
+    ssize_t result;
+    size_t newlen;
+    result = utf8proc_decompose((uint8_t*) s, 0, NULL, 0, options);
+    if (result < 0) goto error;
+    newlen = result * sizeof(int32_t) + 1;
+    if (newlen > buflen) {
+        buflen = newlen * 2;
+        buf = realloc(buf, buflen);
+        if (!buf) lerror(MemoryError, "error allocating UTF8 buffer");
+    }
+    result = utf8proc_decompose((uint8_t*)s,0, (int32_t*)buf,result, options);
+    if (result < 0) goto error;
+    result = utf8proc_reencode((int32_t*)buf,result, options);
+    if (result < 0) goto error;
+    return (char*) buf;
+error:
+    lerrorf(ParseError, "error normalizing identifier %s: %s", s,
+            utf8proc_errmsg(result));
+}
+
+// note: assumes str is normalized
+static symbol_t *mk_symbol(const char *str)
 {
     symbol_t *sym;
     size_t len = strlen(str);
 
-    sym = (symbol_t*)malloc(sizeof(symbol_t)-sizeof(void*) + len + 1);
+    sym = (symbol_t*)malloc((sizeof(symbol_t)-sizeof(void*)+len+1+7)&-8);
     assert(((uptrint_t)sym & 0x7) == 0); // make sure malloc aligns 8
     sym->left = sym->right = NULL;
     sym->flags = 0;
@@ -266,13 +305,15 @@ static symbol_t *mk_symbol(char *str)
     else {
         sym->binding = UNBOUND;
     }
-    sym->type = sym->dlcache = NULL;
+    sym->type = NULL;
+    sym->dlcache = NULL;
     sym->hash = memhash32(str, len)^0xAAAAAAAA;
     strcpy(&sym->name[0], str);
     return sym;
 }
 
-static symbol_t **symtab_lookup(symbol_t **ptree, char *str)
+// note: assumes str is normalized
+static symbol_t **symtab_lookup(symbol_t **ptree, const char *str)
 {
     int x;
 
@@ -291,10 +332,11 @@ static symbol_t **symtab_lookup(symbol_t **ptree, char *str)
 value_t symbol(char *str)
 {
     symbol_t **pnode;
+    const char *nstr = normalize(str);
 
-    pnode = symtab_lookup(&symtab, str);
+    pnode = symtab_lookup(&symtab, nstr);
     if (*pnode == NULL)
-        *pnode = mk_symbol(str);
+        *pnode = mk_symbol(nstr);
     return tagptr(*pnode, TAG_SYM);
 }
 
@@ -305,6 +347,12 @@ static char gsname[2][16];
 static int gsnameno=0;
 value_t fl_gensym(value_t *args, uint32_t nargs)
 {
+#ifdef MEMDEBUG2
+    gsnameno = 1-gsnameno;
+    char *n = uint2str(gsname[gsnameno]+1, sizeof(gsname[0])-1, _gensym_ctr++, 10);
+    *(--n) = 'g';
+    return tagptr(mk_symbol(n), TAG_SYM);
+#else
     argcount("gensym", nargs, 0);
     (void)args;
     gensym_t *gs = (gensym_t*)alloc_words(sizeof(gensym_t)/sizeof(void*));
@@ -313,6 +361,7 @@ value_t fl_gensym(value_t *args, uint32_t nargs)
     gs->isconst = 0;
     gs->type = NULL;
     return tagptr(gs, TAG_SYM);
+#endif
 }
 
 int fl_isgensym(value_t v)
@@ -328,6 +377,7 @@ static value_t fl_gensymp(value_t *args, u_int32_t nargs)
 
 char *symbol_name(value_t v)
 {
+#ifndef MEMDEBUG2
     if (ismanaged(v)) {
         gensym_t *gs = (gensym_t*)ptr(v);
         gsnameno = 1-gsnameno;
@@ -335,10 +385,17 @@ char *symbol_name(value_t v)
         *(--n) = 'g';
         return n;
     }
+#endif
     return ((symbol_t*)ptr(v))->name;
 }
 
 // conses ---------------------------------------------------------------------
+
+#ifdef MEMDEBUG2
+static void *tochain=NULL;
+static long long n_allocd=0;
+#define GC_INTERVAL 100000
+#endif
 
 void gc(int mustgrow);
 
@@ -346,10 +403,19 @@ static value_t mk_cons(void)
 {
     cons_t *c;
 
+#ifdef MEMDEBUG2
+    if (n_allocd > GC_INTERVAL)
+        gc(0);
+    c = (cons_t*)((void**)malloc(3*sizeof(void*)) + 1);
+    ((void**)c)[-1] = tochain;
+    tochain = c;
+    n_allocd += sizeof(cons_t);
+#else
     if (__unlikely(curheap > lim))
         gc(0);
     c = (cons_t*)curheap;
     curheap += sizeof(cons_t);
+#endif
     return tagptr(c, TAG_CONS);
 }
 
@@ -359,6 +425,14 @@ static value_t *alloc_words(int n)
 
     assert(n > 0);
     n = LLT_ALIGN(n, 2);   // only allocate multiples of 2 words
+#ifdef MEMDEBUG2
+    if (n_allocd > GC_INTERVAL)
+        gc(0);
+    first = (value_t*)malloc((n+1)*sizeof(value_t)) + 1;
+    first[-1] = (value_t)tochain;
+    tochain = first;
+    n_allocd += (n*sizeof(value_t));
+#else
     if (__unlikely((value_t*)curheap > ((value_t*)lim)+2-n)) {
         gc(0);
         while ((value_t*)curheap > ((value_t*)lim)+2-n) {
@@ -367,16 +441,28 @@ static value_t *alloc_words(int n)
     }
     first = (value_t*)curheap;
     curheap += (n*sizeof(value_t));
+#endif
     return first;
 }
 
 // allocate n consecutive conses
+#ifndef MEMDEBUG2
 #define cons_reserve(n) tagptr(alloc_words((n)*2), TAG_CONS)
+#endif
 
+#ifndef MEMDEBUG2
 #define cons_index(c)  (((cons_t*)ptr(c))-((cons_t*)fromspace))
+#endif
+
+#ifdef MEMDEBUG2
+#define ismarked(c)    ((((value_t*)ptr(c))[-1]&1) != 0)
+#define mark_cons(c)   ((((value_t*)ptr(c))[-1]) |= 1)
+#define unmark_cons(c) ((((value_t*)ptr(c))[-1]) &= (~(value_t)1))
+#else
 #define ismarked(c)    bitvector_get(consflags, cons_index(c))
 #define mark_cons(c)   bitvector_set(consflags, cons_index(c), 1)
 #define unmark_cons(c) bitvector_set(consflags, cons_index(c), 0)
+#endif
 
 static value_t the_empty_vector;
 
@@ -434,8 +520,12 @@ static value_t relocate(value_t v)
                 *pcdr = cdr_(v);
                 return first;
             }
+#ifdef MEMDEBUG2
+            *pcdr = nc = mk_cons();
+#else
             *pcdr = nc = tagptr((cons_t*)curheap, TAG_CONS);
             curheap += sizeof(cons_t);
+#endif
             d = cdr_(v);
             car_(v) = TAG_FWD; cdr_(v) = nc;
             car_(nc) = relocate(a);
@@ -531,16 +621,22 @@ static value_t memory_exception_value;
 
 void gc(int mustgrow)
 {
-    static int grew = 0;
     void *temp;
     uint32_t i, f, top;
     fl_readstate_t *rs;
-
+#ifdef MEMDEBUG2
+    temp = tochain;
+    tochain = NULL;
+    n_allocd = -100000000000LL;
+#else
+    static int grew = 0;
+    size_t hsz = grew ? heapsize*2 : heapsize;
+#ifdef MEMDEBUG
+    tospace = LLT_ALLOC(hsz);
+#endif
     curheap = tospace;
-    if (grew)
-        lim = curheap+heapsize*2-sizeof(cons_t);
-    else
-        lim = curheap+heapsize-sizeof(cons_t);
+    lim = curheap + hsz - sizeof(cons_t);
+#endif
 
     if (fl_throwing_frame > curr_frame) {
         top = fl_throwing_frame - 4;
@@ -576,22 +672,38 @@ void gc(int mustgrow)
 
     sweep_finalizers();
 
+#ifdef MEMDEBUG2
+    while (temp != NULL) {
+        void *next = ((void**)temp)[-1];
+        free(&((void**)temp)[-1]);
+        temp = next;
+    }
+    n_allocd = 0;
+#else
 #ifdef VERBOSEGC
     printf("GC: found %d/%d live conses\n",
            (curheap-tospace)/sizeof(cons_t), heapsize/sizeof(cons_t));
 #endif
+
     temp = tospace;
     tospace = fromspace;
-    fromspace = temp;
+    fromspace = (unsigned char*)temp;
 
     // if we're using > 80% of the space, resize tospace so we have
     // more space to fill next time. if we grew tospace last time,
     // grow the other half of the heap this time to catch up.
-    if (grew || ((lim-curheap) < (int)(heapsize/5)) || mustgrow) {
+    if (grew || mustgrow
+#ifdef MEMDEBUG
+        // GC more often
+        || ((lim-curheap) < (int)(heapsize/128))
+#else
+        || ((lim-curheap) < (int)(heapsize/5))
+#endif
+        ) {
         temp = LLT_REALLOC(tospace, heapsize*2);
         if (temp == NULL)
             fl_raise(memory_exception_value);
-        tospace = temp;
+        tospace = (unsigned char*)temp;
         if (grew) {
             heapsize*=2;
             temp = bitvector_resize(consflags, 0, heapsize/sizeof(cons_t), 1);
@@ -601,14 +713,18 @@ void gc(int mustgrow)
         }
         grew = !grew;
     }
+#ifdef MEMDEBUG
+    LLT_FREE(tospace);
+#endif
     if (curheap > lim)  // all data was live
         gc(0);
+#endif
 }
 
 static void grow_stack(void)
 {
     size_t newsz = N_STACK + (N_STACK>>1);
-    value_t *ns = realloc(Stack, newsz*sizeof(value_t));
+    value_t *ns = (value_t*)realloc(Stack, newsz*sizeof(value_t));
     if (ns == NULL)
         lerror(MemoryError, "stack overflow");
     Stack = ns;
@@ -691,6 +807,16 @@ value_t fl_listn(size_t n, ...)
         value_t a = va_arg(ap, value_t);
         PUSH(a);
     }
+#ifdef MEMDEBUG2
+    si = SP-1;
+    value_t l = NIL;
+    for(i=0; i < n; i++) {
+        l = fl_cons(Stack[si--], l);
+    }
+    POPN(n);
+    va_end(ap);
+    return l;
+#else
     cons_t *c = (cons_t*)alloc_words(n*2);
     cons_t *l = c;
     for(i=0; i < n; i++) {
@@ -699,16 +825,22 @@ value_t fl_listn(size_t n, ...)
         c++;
     }
     (c-1)->cdr = NIL;
-
     POPN(n);
     va_end(ap);
     return tagptr(l, TAG_CONS);
+#endif
 }
 
 value_t fl_list2(value_t a, value_t b)
 {
     PUSH(a);
     PUSH(b);
+#ifdef MEMDEBUG2
+    Stack[SP-1] = fl_cons(b, NIL);
+    a = fl_cons(Stack[SP-2], Stack[SP-1]);
+    POPN(2);
+    return a;
+#else
     cons_t *c = (cons_t*)alloc_words(4);
     b = POP();
     a = POP();
@@ -717,6 +849,7 @@ value_t fl_list2(value_t a, value_t b)
     c[1].car = b;
     c[1].cdr = NIL;
     return tagptr(c, TAG_CONS);
+#endif
 }
 
 value_t fl_cons(value_t a, value_t b)
@@ -754,8 +887,32 @@ int fl_isnumber(value_t v)
 static value_t _list(value_t *args, uint32_t nargs, int star)
 {
     cons_t *c;
-    uint32_t i;
+    int i;
     value_t v;
+#ifdef MEMDEBUG2
+    value_t n;
+    i = nargs-1;
+    if (star) {
+        n = mk_cons();
+        c = (cons_t*)ptr(n);
+        c->car = args[i-1];
+        c->cdr = args[i];
+        i -= 2;
+        v = n;
+    }
+    else {
+        v = NIL;
+    }
+    PUSH(v);
+    for(; i >= 0; i--) {
+        n = mk_cons();
+        c = (cons_t*)ptr(n);
+        c->car = args[i];
+        c->cdr = Stack[SP-1];
+        Stack[SP-1] = n;
+    }
+    v = POP();
+#else
     v = cons_reserve(nargs);
     c = (cons_t*)ptr(v);
     for(i=0; i < nargs; i++) {
@@ -767,6 +924,7 @@ static value_t _list(value_t *args, uint32_t nargs, int star)
         (c-2)->cdr = (c-1)->car;
     else
         (c-1)->cdr = NIL;
+#endif
     return v;
 }
 
@@ -826,9 +984,11 @@ static uint32_t process_keys(value_t kwtable,
                              uint32_t nreq, uint32_t nkw, uint32_t nopt,
                              uint32_t bp, uint32_t nargs, int va)
 {
+    uptrint_t n;
     uint32_t extr = nopt+nkw;
     uint32_t ntot = nreq+extr;
-    value_t args[extr], v;
+    value_t *args = (value_t*)alloca(extr*sizeof(value_t));
+    value_t v;
     uint32_t i, a = 0, nrestargs;
     value_t s1 = Stack[SP-1];
     value_t s2 = Stack[SP-2];
@@ -847,7 +1007,7 @@ static uint32_t process_keys(value_t kwtable,
     }
     if (i >= nargs) goto no_kw;
     // now process keywords
-    uptrint_t n = vector_size(kwtable)/2;
+    n = vector_size(kwtable)/2;
     do {
         i++;
         if (i >= nargs)
@@ -956,8 +1116,10 @@ static value_t apply_cl(uint32_t nargs)
  apply_cl_top:
     captured = 0;
     func = Stack[SP-nargs-1];
-    ip = cv_data((cvalue_t*)ptr(fn_bcode(func)));
+    ip = (uint8_t*)cv_data((cvalue_t*)ptr(fn_bcode(func)));
+#ifndef MEMDEBUG2
     assert(!ismanaged((uptrint_t)ip));
+#endif
     while (SP+GET_INT32(ip) > N_STACK) {
         grow_stack();
     }
@@ -1269,10 +1431,14 @@ static value_t apply_cl(uint32_t nargs)
             Stack[SP-1] = (isvector(Stack[SP-1]) ? FL_T : FL_F); NEXT_OP;
 
         OP(OP_CONS)
+#ifdef MEMDEBUG2
+            c = (cons_t*)ptr(mk_cons());
+#else
             if (curheap > lim)
                 gc(0);
             c = (cons_t*)curheap;
             curheap += sizeof(cons_t);
+#endif
             c->car = Stack[SP-2];
             c->cdr = Stack[SP-1];
             Stack[SP-2] = tagptr(c, TAG_CONS);
@@ -1370,7 +1536,7 @@ static value_t apply_cl(uint32_t nargs)
                 if (fits_fixnum(s))
                     v = fixnum(s);
                 else
-                    v = mk_long(s);
+                    v = mk_ptrdiff(s);
             }
             else {
                 v = fl_add_any(&Stack[SP-2], 2, 0);
@@ -1408,7 +1574,7 @@ static value_t apply_cl(uint32_t nargs)
                 if (fits_fixnum(s))
                     v = fixnum(s);
                 else
-                    v = mk_long(s);
+                    v = mk_ptrdiff(s);
             }
             else {
                 Stack[SP-1] = fl_neg(Stack[SP-1]);
@@ -1513,7 +1679,7 @@ static value_t apply_cl(uint32_t nargs)
                 if (isfixnum(e))
                     i = numval(e);
                 else
-                    i = (uint32_t)toulong(e, "aref");
+                    i = (uint32_t)tosize(e, "aref");
                 if ((unsigned)i >= vector_size(v))
                     bounds_error("aref", v, e);
                 v = vector_elt(v, i);
@@ -1734,10 +1900,14 @@ static value_t apply_cl(uint32_t nargs)
             else {
                 PUSH(Stack[bp]); // env has already been captured; share
             }
+#ifdef MEMDEBUG2
+            pv = alloc_words(4);
+#else
             if (curheap > lim-2)
                 gc(0);
             pv = (value_t*)curheap;
             curheap += (4*sizeof(value_t));
+#endif
             e = Stack[SP-2];  // closure to copy
             assert(isfunction(e));
             pv[0] = ((value_t*)ptr(e))[0];
@@ -2021,7 +2191,7 @@ static value_t fl_function(value_t *args, uint32_t nargs)
         type_error("function", "vector", args[1]);
     cvalue_t *arr = (cvalue_t*)ptr(args[0]);
     cv_pin(arr);
-    char *data = cv_data(arr);
+    char *data = (char*)cv_data(arr);
     int swap = 0;
     if ((uint8_t)data[4] >= N_OPCODES) {
         // read syntax, shifted 48 for compact text representation
@@ -2114,7 +2284,13 @@ value_t fl_append(value_t *args, u_int32_t nargs)
                 first = lst;
             else
                 cdr_(lastcons) = lst;
+#ifdef MEMDEBUG2
+            lastcons = lst;
+            while (cdr_(lastcons) != NIL)
+                lastcons = cdr_(lastcons);
+#else
             lastcons = tagptr((((cons_t*)curheap)-1), TAG_CONS);
+#endif
         }
         else if (lst != NIL) {
             type_error("append", "cons", lst);
@@ -2147,65 +2323,71 @@ value_t fl_map1(value_t *args, u_int32_t nargs)
     if (nargs < 2)
         lerror(ArgError, "map: too few arguments");
     if (!iscons(args[1])) return NIL;
-    value_t first, last, v;
+    value_t *first, *last, v;
+    int64_t argSP = args-Stack;
+    assert(argSP >= 0 && argSP < N_STACK);
     if (nargs == 2) {
-        if (SP+3 > N_STACK) grow_stack();
-        PUSH(args[0]);
-        PUSH(car_(args[1]));
+        if (SP+4 > N_STACK) grow_stack();
+        PUSH(Stack[argSP]);
+        PUSH(car_(Stack[argSP+1]));
         v = _applyn(1);
+        POPN(2);
         PUSH(v);
         v = mk_cons();
         car_(v) = POP(); cdr_(v) = NIL;
-        last = first = v;
-        args[1] = cdr_(args[1]);
-        fl_gc_handle(&first);
-        fl_gc_handle(&last);
-        while (iscons(args[1])) {
-            Stack[SP-2] = args[0];
-            Stack[SP-1] = car_(args[1]);
+        PUSH(v);
+        PUSH(v);
+        first = &Stack[SP-2];
+        last = &Stack[SP-1];
+        Stack[argSP+1] = cdr_(Stack[argSP+1]);
+        while (iscons(Stack[argSP+1])) {
+            PUSH(Stack[argSP]);
+            PUSH(car_(Stack[argSP+1]));
             v = _applyn(1);
+            POPN(2);
             PUSH(v);
             v = mk_cons();
             car_(v) = POP(); cdr_(v) = NIL;
-            cdr_(last) = v;
-            last = v;
-            args[1] = cdr_(args[1]);
+            cdr_(*last) = v;
+            *last = v;
+            Stack[argSP+1] = cdr_(Stack[argSP+1]);
         }
         POPN(2);
-        fl_free_gc_handles(2);
     }
     else {
         size_t i;
         while (SP+nargs+1 > N_STACK) grow_stack();
-        PUSH(args[0]);
+        PUSH(Stack[argSP]);
         for(i=1; i < nargs; i++) {
-            PUSH(car(args[i]));
-            args[i] = cdr_(args[i]);
+            PUSH(car(Stack[argSP+i]));
+            Stack[argSP+i] = cdr_(Stack[argSP+i]);
         }
         v = _applyn(nargs-1);
+        POPN(nargs);
         PUSH(v);
         v = mk_cons();
         car_(v) = POP(); cdr_(v) = NIL;
-        last = first = v;
-        fl_gc_handle(&first);
-        fl_gc_handle(&last);
-        while (iscons(args[1])) {
-            Stack[SP-nargs] = args[0];
+        PUSH(v);
+        PUSH(v);
+        first = &Stack[SP-2];
+        last = &Stack[SP-1];
+        while (iscons(Stack[argSP+1])) {
+            PUSH(Stack[argSP]);
             for(i=1; i < nargs; i++) {
-                Stack[SP-nargs+i] = car(args[i]);
-                args[i] = cdr_(args[i]);
+                PUSH(car(Stack[argSP+i]));
+                Stack[argSP+i] = cdr_(Stack[argSP+i]);
             }
             v = _applyn(nargs-1);
+            POPN(nargs);
             PUSH(v);
             v = mk_cons();
             car_(v) = POP(); cdr_(v) = NIL;
-            cdr_(last) = v;
-            last = v;
+            cdr_(*last) = v;
+            *last = v;
         }
-        POPN(nargs);
-        fl_free_gc_handles(2);
+        POPN(2);
     }
-    return first;
+    return *first;
 }
 
 static builtinspec_t core_builtin_info[] = {
@@ -2238,15 +2420,19 @@ static void lisp_init(size_t initial_heapsize)
 
     heapsize = initial_heapsize;
 
-    fromspace = LLT_ALLOC(heapsize);
-    tospace   = LLT_ALLOC(heapsize);
+    fromspace = (unsigned char*)LLT_ALLOC(heapsize);
+#ifdef MEMDEBUG
+    tospace   = NULL;
+#else
+    tospace   = (unsigned char*)LLT_ALLOC(heapsize);
+#endif
     curheap = fromspace;
     lim = curheap+heapsize-sizeof(cons_t);
     consflags = bitvector_new(heapsize/sizeof(cons_t), 1);
     htable_new(&printconses, 32);
     comparehash_init();
     N_STACK = 262144;
-    Stack = malloc(N_STACK*sizeof(value_t));
+    Stack = (value_t*)malloc(N_STACK*sizeof(value_t));
 
     FL_NIL = NIL = builtin(OP_THE_EMPTY_LIST);
     FL_T = builtin(OP_BOOL_CONST_T);
@@ -2268,7 +2454,7 @@ static void lisp_init(size_t initial_heapsize)
     vectorsym = symbol("vector");     builtinsym = symbol("builtin");
     booleansym = symbol("boolean");   nullsym = symbol("null");
     definesym = symbol("define");     defmacrosym = symbol("define-macro");
-    forsym = symbol("for");           labelsym = symbol("label");
+    forsym = symbol("for");
     setqsym = symbol("set!");         evalsym = symbol("eval");
     vu8sym = symbol("vu8");           fnsym = symbol("fn");
     nulsym = symbol("nul");           alarmsym = symbol("alarm");
@@ -2294,11 +2480,11 @@ static void lisp_init(size_t initial_heapsize)
     setc(symbol("procedure?"), builtin(OP_FUNCTIONP));
     setc(symbol("top-level-bound?"), builtin(OP_BOUNDP));
 
-#ifdef __linux__
+#if defined(_OS_LINUX_)
     set(symbol("*os-name*"), symbol("linux"));
-#elif defined(WIN32) || defined(WIN64)
+#elif defined(_OS_WINDOWS_)
     set(symbol("*os-name*"), symbol("win32"));
-#elif defined(__APPLE__)
+#elif defined(_OS_DARWIN_)
     set(symbol("*os-name*"), symbol("macos"));
 #else
     set(symbol("*os-name*"), symbol("unknown"));

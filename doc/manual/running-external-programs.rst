@@ -33,12 +33,19 @@ Here's a simple example of actually running an external program::
 
     julia> run(`echo hello`)
     hello
-    true
 
-The ``hello`` is the output of the ``echo`` command, while the ``true``
-is the return value of the command, indicating that it succeeded. (These
-are colored differently by the interactive session if your terminal
-supports color.)
+The ``hello`` is the output of the ``echo`` command, sent to stdout. 
+The run method itself returns ``nothing``, and throws an ``ErrorException``
+if the external command fails to run successfully. 
+
+If you want to read the output of the external command, the ``readall`` method
+can be used instead::
+
+    julia> a=readall(`echo hello`)
+    "hello\n"
+
+    julia> (chomp(a)) == "hello"
+    true
 
 .. _man-command-interpolation:
 
@@ -92,7 +99,10 @@ escaped. But what if you *want* to interpolate multiple words? In that
 case, just use an array (or any other iterable container)::
 
     julia> files = ["/etc/passwd","/Volumes/External HD/data.csv"]
-    ["/etc/passwd","/Volumes/External HD/data.csv"]
+    2-element ASCIIString Array:
+     "/etc/passwd"                  
+     "/Volumes/External HD/data.csv"
+
 
     julia> `grep foo $files`
     `grep foo /etc/passwd '/Volumes/External HD/data.csv'`
@@ -101,7 +111,10 @@ If you interpolate an array as part of a shell word, Julia emulates the
 shell's ``{a,b,c}`` argument generation::
 
     julia> names = ["foo","bar","baz"]
-    ["foo","bar","baz"]
+    3-element ASCIIString Array:
+     "foo"
+     "bar"
+     "baz"
 
     julia> `grep xylophone $names.txt`
     `grep xylophone foo.txt bar.txt baz.txt`
@@ -110,10 +123,15 @@ Moreover, if you interpolate multiple arrays into the same word, the
 shell's Cartesian product generation behavior is emulated::
 
     julia> names = ["foo","bar","baz"]
-    ["foo","bar","baz"]
+    3-element ASCIIString Array:
+     "foo"
+     "bar"
+     "baz"
 
     julia> exts = ["aux","log"]
-    ["aux","log"]
+    2-element ASCIIString Array:
+     "aux"
+     "log"
 
     julia> `rm -f $names.$exts`
     `rm -f foo.aux foo.log bar.aux bar.log baz.aux baz.log`
@@ -165,7 +183,6 @@ Julia::
     1
     2
     3
-    true
 
     julia> first = "A"; second = "B";
 
@@ -175,7 +192,6 @@ Julia::
     julia> run(ans)
     1: A
     2: B
-    true
 
 The results are identical, and Julia's interpolation behavior mimics the
 shell's with some improvements due to the fact that Julia supports
@@ -194,30 +210,27 @@ backticks, a pipe is always just a pipe::
 
     julia> run(`echo hello | sort`)
     hello | sort
-    true
 
 This expression invokes the ``echo`` command with three words as
 arguments: "hello", "\|", and "sort". The result is that a single line
 is printed: "hello \| sort". Inside of backticks, a "\|" is just a
 literal pipe character. How, then, does one construct a pipeline?
-Instead of using "\|" inside of backticks, one uses Julia's ``|``
+Instead of using "\|" inside of backticks, one uses Julia's ``|>``
 operator between ``Cmd`` objects::
 
-    julia> run(`echo hello` | `sort`)
+    julia> run(`echo hello` |> `sort`)
     hello
-    true
 
 This pipes the output of the ``echo`` command to the ``sort`` command.
 Of course, this isn't terribly interesting since there's only one line
 to sort, but we can certainly do much more interesting things::
 
-    julia> run(`cut -d: -f3 /etc/passwd` | `sort -n` | `tail -n5`)
+    julia> run(`cut -d: -f3 /etc/passwd` |> `sort -n` |> `tail -n5`)
     210
     211
     212
     213
     214
-    true
 
 This prints the highest five user IDs on a UNIX system. The ``cut``,
 ``sort`` and ``tail`` commands are all spawned as immediate children of
@@ -231,7 +244,6 @@ Julia can run multiple commands in parallel::
     julia> run(`echo hello` & `echo world`)
     world
     hello
-    true
 
 The order of the output here is non-deterministic because the two
 ``echo`` processes are started nearly simultaneously, and race to make
@@ -239,10 +251,9 @@ the first write to the ``stdout`` descriptor they share with each other
 and the ``julia`` parent process. Julia lets you pipe the output from
 both of these processes to another program::
 
-    julia> run(`echo world` & `echo hello` | `sort`)
+    julia> run(`echo world` & `echo hello` |> `sort`)
     hello
     world
-    true
 
 In terms of UNIX plumbing, what's happening here is that a single UNIX
 pipe object is created and written to by both ``echo`` processes, and
@@ -256,7 +267,7 @@ apologies for the excessive use of Perl one-liners::
 
     julia> prefixer(prefix, sleep) = `perl -nle '$|=1; print "'$prefix' ", $_; sleep '$sleep';'`
 
-    julia> run(`perl -le '$|=1; for(0..9){ print; sleep 1 }'` | prefixer("A",2) & prefixer("B",2))
+    julia> run(`perl -le '$|=1; for(0..9){ print; sleep 1 }'` |> prefixer("A",2) & prefixer("B",2))
     A   0
     B   1
     A   2
@@ -267,7 +278,6 @@ apologies for the excessive use of Perl one-liners::
     B   7
     A   8
     B   9
-    true
 
 This is a classic example of a single producer feeding two concurrent
 consumers: one ``perl`` process generates lines with the numbers 0
@@ -282,8 +292,8 @@ once, to be read by just one consumer process.)
 
 Here is an even more complex multi-stage producer-consumer example::
 
-    julia> run(`perl -le '$|=1; for(0..9){ print; sleep 1 }'` |
-               prefixer("X",3) & prefixer("Y",3) & prefixer("Z",3) |
+    julia> run(`perl -le '$|=1; for(0..9){ print; sleep 1 }'` |>
+               prefixer("X",3) & prefixer("Y",3) & prefixer("Z",3) |>
                prefixer("A",2) & prefixer("B",2))
     B   Y   0
     A   Z   1
@@ -295,57 +305,9 @@ Here is an even more complex multi-stage producer-consumer example::
     A   Z   7
     B   X   8
     A   Y   9
-    true
 
 This example is similar to the previous one, except there are two stages
 of consumers, and the stages have different latency so they use a
 different number of parallel workers, to maintain saturated throughput.
 
-Finally, we have an example of how you can make a process read from
-itself::
-
-    julia> gen = `perl -le '$|=1; for(0..9){ print; sleep 1 }'`
-    `perl -le '$|=1; for(0..9){ print; sleep 1 }'`
-
-    julia> dup = `perl -ne '$|=1; warn $_; print ".$_"; sleep 1'`
-    `perl -ne '$|=1; warn $_; print ".$_"; sleep 1'`
-
-    julia> run(gen | dup | dup)
-    0
-    .0
-    1
-    ..0
-    2
-    .1
-    3
-    ...0
-    4
-    .2
-    5
-    ..1
-    6
-    .3
-    ....0
-    7
-    .4
-    8
-    9
-    ..2
-    .5
-    ...1
-    .6
-    ..3
-    .....0
-    .7
-    ..4
-    .8
-    .9
-    ...2
-    ..5
-    ....1
-    ..6
-    ...3
-
-This example never terminates since the ``dup`` process reads its own
-output and duplicates it to ``stderr`` forever. We strongly encourage
-you to try all these examples to see how they work.
+We strongly encourage you to try all these examples to see how they work.

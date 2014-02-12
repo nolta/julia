@@ -1,6 +1,6 @@
 Julia is licensed under the MIT License:
 
-> Copyright (c) 2009-2012: Jeff Bezanson, Stefan Karpinski, Viral B. Shah, 
+> Copyright (c) 2009-2013: Jeff Bezanson, Stefan Karpinski, Viral B. Shah, 
 > and other contributors:
 > 
 > https://github.com/JuliaLang/julia/contributors
@@ -27,7 +27,7 @@ Julia is licensed under the MIT License:
 [`repl-readline.c`](https://github.com/JuliaLang/julia/blob/master/ui/repl-readline.c)
 is licensed under the GNU General Public License Version 2:
 
-> Copyright (c) 2009-2012: Jeff Bezanson, Stefan Karpinski, Viral B. Shah.
+> Copyright (c) 2009-2013: Jeff Bezanson, Stefan Karpinski, Viral B. Shah.
 > 
 > This program is free software; you can redistribute it and/or modify
 > it under the terms of the GNU General Public License as published by
@@ -45,20 +45,27 @@ is licensed under the GNU General Public License Version 2:
 
 External libraries, if used, include their own licenses:
 
+- [7-Zip](http://www.7-zip.org/license.txt)
 - [AMOS](http://www.netlib.org/slatec/guide)
 - [ARPACK](http://www.caam.rice.edu/software/ARPACK/RiceBSD.txt#LICENSE)
+- [ATLAS](http://math-atlas.sourceforge.net/faq.html#license)
 - [D3](https://github.com/mbostock/d3/raw/master/LICENSE)
 - [DOUBLE-CONVERSION](https://code.google.com/p/double-conversion/)
 - [DSFMT](http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/SFMT/LICENSE.txt)
 - [OPENLIBM](https://github.com/JuliaLang/openlibm/blob/master/LICENSE.md)
+- [FADDEEVA](http://ab-initio.mit.edu/Faddeeva)
 - [FEMTOLISP](https://github.com/JeffBezanson/femtolisp)
 - [FFTW](http://fftw.org/doc/License-and-Copyright.html)
-- [GLPK](http://www.gnu.org/software/glpk)
+- [GIT](http://git-scm.com/about/free-and-open-source)
 - [GMP](http://gmplib.org/manual/Copying.html#Copying)
 - [LAPACK](http://netlib.org/lapack/LICENSE.txt)
+- [LIBEXPAT](http://expat.cvs.sourceforge.net/viewvc/expat/expat/README)
 - [LIBUNWIND](http://git.savannah.gnu.org/gitweb/?p=libunwind.git;a=blob_plain;f=LICENSE;hb=master)
+- [LIBUV](https://github.com/joyent/libuv/blob/master/LICENSE)
 - [LLVM](http://llvm.org/releases/3.0/LICENSE.TXT)
+- [MPFR](http://www.mpfr.org/mpfr-current/mpfr.html#Copying)
 - [OPENBLAS](https://raw.github.com/xianyi/OpenBLAS/master/LICENSE)
+- [PATCHELF](http://hydra.nixos.org/build/1524660/download/1/README)
 - [PCRE](http://www.pcre.org/licence.txt)
 - [READLINE](http://cnswww.cns.cwru.edu/php/chet/readline/rltop.html)
 - [RMATH](http://www.r-project.org/Licenses/)

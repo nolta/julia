@@ -8,10 +8,4 @@
 
    manual/index
    stdlib/index
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`search`
-
+   packages/packagelist

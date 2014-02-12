@@ -19,7 +19,7 @@
 # Takes a string. Returns a Dict with the number of times each word 
 # appears in that string.
 function wordcount(text)
-    words=split(text,(' ','\n','\t','-','.',',',':',';'),false)
+    words=split(text,[' ','\n','\t','-','.',',',':',';'],false)
     counts=Dict()
     for w = words
         counts[w]=get(counts,w,0)+1
@@ -82,6 +82,6 @@ function wordcount_files(result_file,input_file_names...)
     wc=parallel_wordcount(text)
     fo=open(result_file,"w")
     for (k,v) = wc
-        with_output_stream(fo,println,k,"=",v)
+        println(fo,k,"=",v)
     end
 end

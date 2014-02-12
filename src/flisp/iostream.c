@@ -109,7 +109,7 @@ value_t fl_buffer(value_t *args, u_int32_t nargs)
 
 value_t fl_read(value_t *args, u_int32_t nargs)
 {
-    value_t arg;
+    value_t arg = 0;
     if (nargs > 1) {
         argcount("read", nargs, 1);
     }
@@ -215,9 +215,9 @@ value_t fl_ioseek(value_t *args, u_int32_t nargs)
 {
     argcount("io.seek", nargs, 2);
     ios_t *s = toiostream(args[0], "io.seek");
-    size_t pos = toulong(args[1], "io.seek");
+    size_t pos = tosize(args[1], "io.seek");
     off_t res = ios_seek(s, (off_t)pos);
-    if (res == -1)
+    if (res < 0)
         return FL_F;
     return FL_T;
 }
@@ -255,7 +255,7 @@ value_t fl_ioread(value_t *args, u_int32_t nargs)
     if (nargs == 3) {
         // form (io.read s type count)
         ft = get_array_type(args[1]);
-        n = toulong(args[2], "io.read") * ft->elsz;
+        n = tosize(args[2], "io.read") * ft->elsz;
     }
     else {
         ft = get_type(args[1]);
@@ -265,7 +265,7 @@ value_t fl_ioread(value_t *args, u_int32_t nargs)
     }
     value_t cv = cvalue(ft, n);
     char *data;
-    if (iscvalue(cv)) data = cv_data((cvalue_t*)ptr(cv));
+    if (iscvalue(cv)) data = (char*)cv_data((cvalue_t*)ptr(cv));
     else data = cp_data((cprim_t*)ptr(cv));
     size_t got = ios_read(value2c(ios_t*,args[0]), data, n);
     if (got < n)
@@ -279,9 +279,9 @@ static void get_start_count_args(value_t *args, uint32_t nargs, size_t sz,
                                  size_t *offs, size_t *nb, char *fname)
 {
     if (nargs > 1) {
-        *offs = toulong(args[1], fname);
+        *offs = tosize(args[1], fname);
         if (nargs > 2)
-            *nb = toulong(args[2], fname);
+            *nb = tosize(args[2], fname);
         else
             *nb = sz - *offs;
         if (*offs >= sz || *offs + *nb > sz)
@@ -314,7 +314,7 @@ value_t fl_iowrite(value_t *args, u_int32_t nargs)
 
 static char get_delim_arg(value_t arg, char *fname)
 {
-    size_t uldelim = toulong(arg, fname);
+    size_t uldelim = tosize(arg, fname);
     if (uldelim > 0x7f) {
         // wchars > 0x7f, or anything else > 0xff, are out of range
         if ((iscprim(arg) && cp_class((cprim_t*)ptr(arg))==wchartype) ||
@@ -329,7 +329,7 @@ value_t fl_ioreaduntil(value_t *args, u_int32_t nargs)
     argcount("io.readuntil", nargs, 2);
     value_t str = cvalue_string(80);
     cvalue_t *cv = (cvalue_t*)ptr(str);
-    char *data = cv_data(cv);
+    char *data = (char*)cv_data(cv);
     ios_t dest;
     ios_mem(&dest, 0);
     ios_setbuf(&dest, data, 80, 0);
@@ -364,7 +364,7 @@ value_t fl_iocopy(value_t *args, u_int32_t nargs)
     ios_t *dest = toiostream(args[0], "io.copy");
     ios_t *src = toiostream(args[1], "io.copy");
     if (nargs == 3) {
-        size_t n = toulong(args[2], "io.copy");
+        size_t n = tosize(args[2], "io.copy");
         return size_wrap(ios_copy(dest, src, n));
     }
     return size_wrap(ios_copyall(dest, src));
@@ -378,7 +378,8 @@ value_t stream_to_string(value_t *ps)
     if (st->buf == &st->local[0]) {
         n = st->size;
         str = cvalue_string(n);
-        memcpy(cvalue_data(str), value2c(ios_t*,*ps)->buf, n);
+        st = value2c(ios_t*,*ps); // reload after allocating str
+        memcpy(cvalue_data(str), st->buf, n);
         ios_trunc(st, 0);
     }
     else {

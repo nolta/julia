@@ -68,7 +68,9 @@ function. The ``convert`` function generally takes two arguments: the
 first is a type object while the second is a value to convert to that
 type; the returned value is the value converted to an instance of given
 type. The simplest way to understand this function is to see it in
-action::
+action:
+
+.. doctest::
 
     julia> x = 12
     12
@@ -77,7 +79,7 @@ action::
     Int64
 
     julia> convert(Uint8, x)
-    12
+    0x0c
 
     julia> typeof(ans)
     Uint8
@@ -90,10 +92,13 @@ action::
 
 Conversion isn't always possible, in which case a no method error is
 thrown indicating that ``convert`` doesn't know how to perform the
-requested conversion::
+requested conversion:
+
+.. doctest::
 
     julia> convert(FloatingPoint, "foo")
-    no method convert(Type{FloatingPoint},ASCIIString)
+    ERROR: no method convert(Type{FloatingPoint}, ASCIIString)
+     in convert at base.jl:11
 
 Some languages consider parsing strings as numbers or formatting
 numbers as strings to be conversions (many dynamic languages will even
@@ -115,7 +120,9 @@ type <man-singleton-types>`, ``Type{Bool}``, the only instance of
 which is ``Bool``. Thus, this method is only invoked when the first
 argument is the type value ``Bool``. When invoked, the method determines
 whether a numeric value is true or false as a boolean, by comparing it
-to zero::
+to zero:
+
+.. doctest::
 
     julia> convert(Bool, 1)
     true
@@ -124,13 +131,24 @@ to zero::
     false
 
     julia> convert(Bool, 1im)
-    true
+    ERROR: InexactError()
+     in convert at complex.jl:27
 
     julia> convert(Bool, 0im)
     false
 
 The method signatures for conversion methods are often quite a bit more
-involved than this example, especially for parametric types.
+involved than this example, especially for parametric types. The example 
+above is meant to be pedagogical, and is not the actual julia behaviour.
+This is the actual implementation in julia::
+
+    convert{T<:Real}(::Type{T}, z::Complex) = (imag(z)==0 ? convert(T,real(z)) :
+                                               throw(InexactError()))
+
+    julia> convert(Bool, 1im)
+    InexactError()
+     in convert at complex.jl:40
+
 
 Case Study: Rational Conversions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -179,6 +197,8 @@ simply converts both numerator and denominator to that floating point
 type and then divides. To convert to integer, one can use the ``div``
 operator for truncated integer division (rounded towards zero).
 
+.. _man-promotion:
+
 Promotion
 ---------
 
@@ -199,7 +219,9 @@ Promotion to a common supertype is performed in Julia by the ``promote``
 function, which takes any number of arguments, and returns a tuple of
 the same number of values, converted to a common type, or throws an
 exception if promotion is not possible. The most common use case for
-promotion is to convert numeric arguments to a common type::
+promotion is to convert numeric arguments to a common type:
+
+.. doctest::
 
     julia> promote(1, 2.5)
     (1.0,2.5)
@@ -255,15 +277,17 @@ fields promoted to an appropriate common type. For example, recall that
 `rational.jl <https://github.com/JuliaLang/julia/blob/master/base/rational.jl>`_
 provides the following outer constructor method::
 
-    Rational(n::Int, d::Int) = Rational(promote(n,d)...)
+    Rational(n::Integer, d::Integer) = Rational(promote(n,d)...)
 
-This allows calls like the following to work::
+This allows calls like the following to work:
+
+.. doctest::
 
     julia> Rational(int8(15),int32(-5))
     -3//1
 
     julia> typeof(ans)
-    Rational{Int32}
+    Rational{Int64} (constructor with 1 method)
 
 For most user-defined types, it is better practice to require
 programmers to supply the expected types to constructor functions
@@ -289,30 +313,30 @@ promoted together, they should be promoted to 64-bit floating-point. The
 promotion type does not need to be one of the argument types, however;
 the following promotion rules both occur in Julia's standard library::
 
-    promote_rule(::Type{Uint8}, ::Type{Int8}) = Int16
+    promote_rule(::Type{Uint8}, ::Type{Int8}) = Int
     promote_rule(::Type{Char}, ::Type{Uint8}) = Int32
 
-The former rule expresses that ``Int16`` is the smallest integer type
-that contains all the values representable by both ``Uint8`` and
-``Int8`` since the former's range extends above 127 while the latter's
-range extends below 0. In the latter case, the result type is ``Int32``
-since ``Int32`` is large enough to contain all possible Unicode code
-points, and numeric operations on characters always result in plain old
-integers unless explicitly cast back to characters (see
-:ref:`man-characters`). Also note that one does not need to
+As a general rule, Julia promotes integers to `Int` during computation
+order to avoid overflow. In the latter case, the result type is
+``Int32`` since ``Int32`` is large enough to contain all possible
+Unicode code points, and numeric operations on characters always
+result in plain old integers unless explicitly cast back to characters
+(see :ref:`man-characters`). Also note that one does not need to
 define both ``promote_rule(::Type{A}, ::Type{B})`` and
-``promote_rule(::Type{B}, ::Type{A})`` — the symmetry is implied by the
-way ``promote_rule`` is used in the promotion process.
+``promote_rule(::Type{B}, ::Type{A})`` — the symmetry is implied by
+the way ``promote_rule`` is used in the promotion process.
 
 The ``promote_rule`` function is used as a building block to define a
 second function called ``promote_type``, which, given any number of type
 objects, returns the common type to which those values, as arguments to
 ``promote`` should be promoted. Thus, if one wants to know, in absence
 of actual values, what type a collection of values of certain types
-would promote to, one can use ``promote_type``::
+would promote to, one can use ``promote_type``:
+
+.. doctest::
 
     julia> promote_type(Int8, Uint16)
-    Int32
+    Int64
 
 Internally, ``promote_type`` is used inside of ``promote`` to determine
 what type argument values should be converted to for promotion. It can,

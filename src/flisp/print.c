@@ -196,7 +196,7 @@ static int specialindent(value_t head)
 {
     // indent these forms 2 spaces, not lined up with the first argument
     if (head == LAMBDA || head == TRYCATCH || head == definesym ||
-        head == defmacrosym || head == forsym || head == labelsym)
+        head == defmacrosym || head == forsym)
         return 2;
     return -1;
 }
@@ -241,7 +241,7 @@ static int indentevery(value_t v)
     // indent before every subform of a special form, unless every
     // subform is "small"
     value_t c = car_(v);
-    if (c == LAMBDA || c == labelsym || c == setqsym)
+    if (c == LAMBDA || c == setqsym)
         return 0;
     if (c == IF) // TODO: others
         return !allsmallp(cdr_(v));
@@ -303,7 +303,7 @@ static void print_pair(ios_t *f, value_t v)
         }
 
         if (!print_pretty ||
-            ((head == LAMBDA || head == labelsym) && n == 0)) {
+            ((head == LAMBDA) && n == 0)) {
             // never break line before lambda-list
             ind = 0;
         }
@@ -318,7 +318,7 @@ static void print_pair(ios_t *f, value_t v)
                    
                    (est!=-1 && (HPOS+est > SCR_WIDTH-2)) ||
                    
-                   ((head == LAMBDA || head == labelsym) && !nextsmall) ||
+                   ((head == LAMBDA) && !nextsmall) ||
                    
                    (n > 0 && always) ||
                    
@@ -433,7 +433,7 @@ void fl_print_child(ios_t *f, value_t v)
                 if (print_circle_prefix(f, v)) break;
                 function_t *fn = (function_t*)ptr(v);
                 outs("#fn(", f);
-                char *data = cvalue_data(fn->bcode);
+                char *data = (char*)cvalue_data(fn->bcode);
                 size_t i, sz = cvalue_len(fn->bcode);
                 for(i=0; i < sz; i++) data[i] += 48;
                 fl_print_child(f, fn->bcode);
@@ -535,6 +535,14 @@ static void print_string(ios_t *f, char *str, size_t sz)
 }
 
 static numerictype_t sym_to_numtype(value_t type);
+#ifndef _OS_WINDOWS_
+#define __USE_GNU
+#include <dlfcn.h>
+#undef __USE_GNU
+#endif
+
+#define sign_bit(r) ((*(int64_t*)&(r)) & BIT63)
+#define DFINITE(d) (((*(int64_t*)&(d))&0x7ff0000000000000LL)!=0x7ff0000000000000LL)
 
 // 'weak' means we don't need to accurately reproduce the type, so
 // for example #int32(0) can be printed as just 0. this is used
@@ -582,22 +590,21 @@ static void cvalue_printdata(ios_t *f, void *data, size_t len, value_t type,
     else if (type == floatsym || type == doublesym) {
         char buf[64];
         double d;
-        int ndec;
-        if (type == floatsym) { d = (double)*(float*)data; ndec = 8; }
-        else { d = *(double*)data; ndec = 16; }
+        if (type == floatsym) { d = (double)*(float*)data; }
+        else { d = *(double*)data; }
         if (!DFINITE(d)) {
             char *rep;
-            if (isnan(d))
-                rep = sign_bit(d) ? "-nan.0" : "+nan.0";
+            if (d != d)
+                rep = (char*)(sign_bit(d) ? "-nan.0" : "+nan.0");
             else
-                rep = sign_bit(d) ? "-inf.0" : "+inf.0";
+                rep = (char*)(sign_bit(d) ? "-inf.0" : "+inf.0");
             if (type == floatsym && !print_princ && !weak)
                 HPOS+=ios_printf(f, "#%s(%s)", symbol_name(type), rep);
             else
                 outs(rep, f);
         }
         else if (d == 0) {
-            if (1/d < 0)
+            if (sign_bit(d))
                 outsn("-0.0", f, 4);
             else
                 outsn("0.0", f, 3);
@@ -605,7 +612,16 @@ static void cvalue_printdata(ios_t *f, void *data, size_t len, value_t type,
                 outc('f', f);
         }
         else {
-            snprint_real(buf, sizeof(buf), d, 0, ndec, 3, 10);
+            double ad = d < 0 ? -d : d;
+            if ((long)d == d && ad < 1e6 && ad >= 1e-4) {
+                snprintf(buf, sizeof(buf), "%g", d);
+            }
+            else {
+                if (type == floatsym)
+                    snprintf(buf, sizeof(buf), "%.8g", d);
+                else
+                    snprintf(buf, sizeof(buf), "%.16g", d);
+            }
             int hasdec = (strpbrk(buf, ".eE") != NULL);
             outs(buf, f);
             if (!hasdec) outsn(".0", f, 2);
@@ -614,8 +630,8 @@ static void cvalue_printdata(ios_t *f, void *data, size_t len, value_t type,
         }
     }
     else if (type == uint64sym
-#ifdef __LP64__
-             || type == ulongsym
+#ifdef _P64
+             || type == sizesym
 #endif
              ) {
         uint64_t ui64 = *(uint64_t*)data;
@@ -627,18 +643,42 @@ static void cvalue_printdata(ios_t *f, void *data, size_t len, value_t type,
     else if (issymbol(type)) {
         // handle other integer prims. we know it's smaller than uint64
         // at this point, so int64 is big enough to capture everything.
-        int64_t i64 = conv_to_int64(data, sym_to_numtype(type));
-        if (weak || print_princ)
-            HPOS += ios_printf(f, "%lld", i64);
-        else
-            HPOS += ios_printf(f, "#%s(%lld)", symbol_name(type), i64);
+        numerictype_t nt = sym_to_numtype(type);
+        if (nt == N_NUMTYPES) {
+            static size_t (*jl_static_print)(ios_t*, void*) = 0;
+            static int init = 0;
+            static value_t jl_sym = 0;
+            if (init == 0) {
+                init = 1;
+#if defined(RTLD_SELF)
+                jl_static_print = (size_t (*)(ios_t *, void *)) dlsym(RTLD_SELF, "jl_static_show");
+#elif defined(RTLD_DEFAULT)
+                jl_static_print = (size_t (*)(ios_t *, void *)) dlsym(RTLD_DEFAULT, "jl_static_show");
+#endif
+                jl_sym = symbol("julia_value");
+            }
+            if (jl_static_print != 0 && jl_sym == type) {
+                HPOS += ios_printf(f, "#<julia: ");
+                HPOS += jl_static_print(f, *(void**)data);
+                HPOS += ios_printf(f, ">");
+            }
+            else
+                HPOS += ios_printf(f, "#<%s>", symbol_name(type));
+        }
+        else {
+            int64_t i64 = conv_to_int64(data, nt);
+            if (weak || print_princ)
+                HPOS += ios_printf(f, "%lld", i64);
+            else
+                HPOS += ios_printf(f, "#%s(%lld)", symbol_name(type), i64);
+        }
     }
     else if (iscons(type)) {
         if (car_(type) == arraysym) {
             value_t eltype = car(cdr_(type));
             size_t cnt, elsize;
             if (iscons(cdr_(cdr_(type)))) {
-                cnt = toulong(car_(cdr_(cdr_(type))), "length");
+                cnt = tosize(car_(cdr_(cdr_(type))), "length");
                 elsize = cnt ? len/cnt : 0;
             }
             else {
@@ -649,7 +689,7 @@ static void cvalue_printdata(ios_t *f, void *data, size_t len, value_t type,
             }
             if (eltype == bytesym) {
                 if (print_princ) {
-                    ios_write(f, data, len);
+                    ios_write(f, (char*)data, len);
                     /*
                     char *nl = memrchr(data, '\n', len);
                     if (nl)
@@ -687,7 +727,7 @@ static void cvalue_printdata(ios_t *f, void *data, size_t len, value_t type,
                 if (i > 0)
                     outc(' ', f);
                 cvalue_printdata(f, data, elsize, eltype, 1);
-                data += elsize;
+                data = (char *)data + elsize;
             }
             if (!weak)
                 outc(')', f);
@@ -707,8 +747,8 @@ static void cvalue_print(ios_t *f, value_t v)
         void *fptr = *(void**)data;
         label = (value_t)ptrhash_get(&reverse_dlsym_lookup_table, cv);
         if (label == (value_t)HT_NOTFOUND) {
-            HPOS += ios_printf(f, "#<builtin @0x%08lx>",
-                               (unsigned long)(builtin_t)fptr);
+            HPOS += ios_printf(f, "#<builtin @0x%08zx>",
+                               (size_t)(builtin_t)fptr);
         }
         else {
             if (print_princ) {

@@ -4,12 +4,12 @@ print(io::IO, x) = show(io, x)
 print(io::IO, xs...) = for x in xs print(io, x) end
 println(io::IO, xs...) = print(io, xs..., '\n')
 
-print(xs...)   = print(OUTPUT_STREAM::IOStream, xs...)
-println(xs...) = println(OUTPUT_STREAM::IOStream, xs...)
+print(xs...)   = print(STDOUT, xs...)
+println(xs...) = println(STDOUT, xs...)
 
 ## core string functions ##
 
-length(s::String) = error("you must implement length(", typeof(s), ")")
+endof(s::String) = error("you must implement endof(", typeof(s), ")")
 next(s::String, i::Int) = error("you must implement next(", typeof(s), ",Int)")
 next(s::DirectIndexString, i::Int) = (s[i],i+1)
 next(s::String, i::Integer) = next(s,int(i))
@@ -17,7 +17,8 @@ next(s::String, i::Integer) = next(s,int(i))
 ## conversion of general objects to strings ##
 
 function print_to_string(xs...)
-    s = memio(isa(xs[1],String) ? length(xs[1]) : 0, false)
+    s = IOBuffer(Array(Uint8,isa(xs[1],String) ? endof(xs[1]) : 0), true, true)
+    truncate(s,0)
     for x in xs
         print(s, x)
     end
@@ -29,52 +30,54 @@ string(s::String) = s
 string(xs...) = print_to_string(xs...)
 
 bytestring() = ""
-bytestring(s::Array{Uint8,1}) = utf8(s)
-bytestring(s::String) = print_to_string(s)
+bytestring(s::Array{Uint8,1}) = bytestring(pointer(s),length(s))
+bytestring(s::String...) = print_to_string(s...)
 
-function bytestring(p::Ptr{Uint8})
+function bytestring(p::Union(Ptr{Uint8},Ptr{Int8}))
     p == C_NULL ? error("cannot convert NULL to string") :
     ccall(:jl_cstr_to_string, ByteString, (Ptr{Uint8},), p)
 end
 
-function bytestring(p::Ptr{Uint8},len::Int)
+function bytestring(p::Union(Ptr{Uint8},Ptr{Int8}),len::Integer)
     p == C_NULL ? error("cannot convert NULL to string") :
     ccall(:jl_pchar_to_string, ByteString, (Ptr{Uint8},Int), p, len)
 end
 
 convert(::Type{Array{Uint8,1}}, s::String) = bytestring(s).data
 convert(::Type{Array{Uint8}}, s::String) = bytestring(s).data
-convert(::Type{Ptr{Uint8}}, s::String) = convert(Ptr{Uint8}, bytestring(s))
 convert(::Type{ByteString}, s::String) = bytestring(s)
+convert(::Type{Array{Char,1}}, s::String) = collect(s)
+convert(::Type{Symbol}, s::String) = symbol(s)
 
 ## generic supplied functions ##
 
 start(s::String) = 1
-done(s::String,i) = (i > length(s))
+done(s::String,i) = (i > endof(s))
 isempty(s::String) = done(s,start(s))
-ref(s::String, i::Int) = next(s,i)[1]
-ref(s::String, i::Integer) = s[int(i)]
-ref(s::String, x::Real) = s[to_index(x)]
-ref{T<:Integer}(s::String, r::Range1{T}) = s[int(first(r)):int(last(r))]
+getindex(s::String, i::Int) = next(s,i)[1]
+getindex(s::String, i::Integer) = s[int(i)]
+getindex(s::String, x::Real) = s[to_index(x)]
+getindex{T<:Integer}(s::String, r::Range1{T}) = s[int(first(r)):int(last(r))]
 # TODO: handle other ranges with stride ±1 specially?
-ref(s::String, v::AbstractVector) =
+getindex(s::String, v::AbstractVector) =
     sprint(length(v), io->(for i in v write(io,s[i]) end))
 
 symbol(s::String) = symbol(bytestring(s))
 
-print(io::IO, s::String) = for c in s write(io, c) end
-write(io::IO, s::String) = print(io, s)
+print(io::IO, s::String) = write(io, s)
+write(io::IO, s::String) = for c in s write(io, c) end
 show(io::IO, s::String) = print_quoted(io, s)
 
-(*)(s::String...) = strcat(s...)
+sizeof(s::String) = error("type $(typeof(s)) has no canonical binary representation")
+
+eltype(::String) = Char
+eltype{T<:String}(::Type{T}) = Char
+
+(*)(s::String...) = string(s...)
 (^)(s::String, r::Integer) = repeat(s,r)
 
-size(s::String) = (length(s),)
-size(s::String, d::Integer) = d==1 ? length(s) :
-    error("in size: dimension ",d," out of range")
-
-strlen(s::DirectIndexString) = length(s)
-function strlen(s::String)
+length(s::DirectIndexString) = endof(s)
+function length(s::String)
     i = start(s)
     if done(s,i)
         return 0
@@ -90,7 +93,7 @@ function strlen(s::String)
     end
 end
 
-isvalid(s::DirectIndexString, i::Integer) = (start(s) <= i <= length(s))
+isvalid(s::DirectIndexString, i::Integer) = (start(s) <= i <= endof(s))
 function isvalid(s::String, i::Integer)
     try
         next(s,i)
@@ -101,27 +104,39 @@ function isvalid(s::String, i::Integer)
 end
 
 prevind(s::DirectIndexString, i::Integer) = i-1
-thisind(s::DirectIndexString, i::Integer) = i
+prevind(s                   , i::Integer) = i-1
 nextind(s::DirectIndexString, i::Integer) = i+1
+nextind(s                   , i::Integer) = i+1
 
-prevind(s::String, i::Integer) = thisind(s,thisind(s,i)-1)
-
-function thisind(s::String, i::Integer)
-    for j = i:-1:1
+function prevind(s::String, i::Integer)
+    e = endof(s)
+    if i > e
+        return e
+    end
+    j = i-1
+    while j >= 1
         if isvalid(s,j)
             return j
         end
+        j -= 1
     end
     return 0 # out of range
 end
 
 function nextind(s::String, i::Integer)
-    for j = i+1:length(s)
+    e = endof(s)
+    if i < 1
+        return 1
+    end
+    if i > e
+        return i+1
+    end
+    for j = i+1:e
         if isvalid(s,j)
             return j
         end
     end
-    length(s)+1 # out of range
+    next(s,e)[2] # out of range
 end
 
 ind2chr(s::DirectIndexString, i::Integer) = i
@@ -159,43 +174,36 @@ end
 
 typealias Chars Union(Char,AbstractVector{Char},Set{Char})
 
-function strchr(s::String, c::Chars, i::Integer)
+function search(s::String, c::Chars, i::Integer)
+    if isempty(c)
+        return 1 <= i <= nextind(s,endof(s)) ? i :
+               error(BoundsError)
+    end
+
     if i < 1 error(BoundsError) end
     i = nextind(s,i-1)
     while !done(s,i)
         d, j = next(s,i)
-        if contains(c,d)
+        if in(d,c)
             return i
         end
         i = j
     end
     return 0
 end
-strchr(s::String, c::Chars) = strchr(s,c,start(s))
-
-contains(s::String, c::Char) = (strchr(s,c)!=0)
-
-function search(s::String, c::Chars, i::Integer)
-    if isempty(c)
-        return 1 <= i <= length(s)+1 ? (i,i) :
-               i == length(s)+2      ? (0,0) :
-               error(BoundsError)
-    end
-    i=strchr(s,c,i)
-    (i, nextind(s,i))
-end
 search(s::String, c::Chars) = search(s,c,start(s))
 
-function search(s::String, t::String, i::Integer)
+in(c::Char, s::String) = (search(s,c)!=0)
+
+function _searchindex(s, t, i)
     if isempty(t)
-        return 1 <= i <= length(s)+1 ? (i,i) :
-               i == length(s)+2      ? (0,0) :
+        return 1 <= i <= nextind(s,endof(s)) ? i :
                error(BoundsError)
     end
     t1, j2 = next(t,start(t))
     while true
-        i = strchr(s,t1,i)
-        if i == 0 return (0,0) end
+        i = search(s,t1,i)
+        if i == 0 return 0 end
         c, ii = next(s,i)
         j = j2; k = ii
         matched = true
@@ -212,34 +220,255 @@ function search(s::String, t::String, i::Integer)
             end
         end
         if matched
-            return (i,k)
+            return i
         end
         i = ii
     end
 end
-search(s::String, t::String) = search(s,t,start(s))
 
-type EachSearch
-    string::String
-    pattern
+function _search_bloom_mask(c)
+    uint64(1) << (c & 63)
 end
-each_search(string::String, pattern) = EachSearch(string, pattern)
 
-start(itr::EachSearch) = search(itr.string, itr.pattern)
-done(itr::EachSearch, st) = (st[1]==0)
-next(itr::EachSearch, st) =
-    (st, search(itr.string, itr.pattern, max(nextind(itr.string,st[1]),st[2])))
+function _searchindex(s::Array, t::Array, i)
+    n = length(t)
+    m = length(s)
 
-function chars(s::String)
-    cx = Array(Char,strlen(s))
-    i = 0
-    for c in s
-        cx[i+=1] = c
+    if n == 0
+        return 1 <= i <= m+1 ? max(1, i) : 0
+    elseif m == 0
+        return 0
+    elseif n == 1
+        return search(s, t[1], i)
     end
-    return cx
+
+    w = m - n
+    if w < 0 || i - 1 > w
+        return 0
+    end
+
+    bloom_mask = uint64(0)
+    skip = n - 1
+    tlast = t[end]
+    for j in 1:n
+        bloom_mask |= _search_bloom_mask(t[j])
+        if t[j] == tlast && j < n
+            skip = n - j - 1
+        end
+    end
+
+    i -= 1
+    while i <= w
+        if s[i+n] == tlast
+            # check candidate
+            j = 0
+            while j < n - 1
+                if s[i+j+1] != t[j+1]
+                    break
+                end
+                j += 1
+            end
+
+            # match found
+            if j == n - 1
+                return i+1
+            end
+
+            # no match, try to rule out the next character
+            if i < w && bloom_mask & _search_bloom_mask(s[i+n+1]) == 0
+                i += n
+            else
+                i += skip
+            end
+        elseif i < w
+            if bloom_mask & _search_bloom_mask(s[i+n+1]) == 0
+                i += n
+            end
+        end
+        i += 1
+    end
+
+    0
 end
+
+searchindex(s::Union(Array{Uint8,1},Array{Int8,1}),t::Union(Array{Uint8,1},Array{Int8,1}),i) = _searchindex(s,t,i)
+searchindex(s::String, t::String, i::Integer) = _searchindex(s,t,i)
+searchindex(s::String, t::String) = searchindex(s,t,start(s))
+
+function searchindex(s::ByteString, t::ByteString, i::Integer=1)
+    if length(t) == 1
+        search(s, t[1], i)
+    else
+        searchindex(s.data, t.data, i)
+    end
+end
+
+function search(s::Union(Array{Uint8,1},Array{Int8,1}),t::Union(Array{Uint8,1},Array{Int8,1}),i)
+    idx = searchindex(s,t,i)
+    if isempty(t)
+        idx:idx-1
+    else
+        idx:(idx > 0 ? idx + endof(t) - 1 : -1)
+    end
+end
+
+function search(s::String, t::String, i::Integer=start(s))
+    idx = searchindex(s,t,i)
+    if isempty(t)
+        idx:idx-1
+    else
+        idx:(idx > 0 ? idx + endof(t) - 1 : -1)
+    end
+end
+
+function rsearch(s::String, c::Chars, i::Integer=endof(s))
+    e = endof(s)
+    j = search(RevString(s), c, e-i+1)
+    j == 0 && return 0
+    e-j+1
+end
+
+function _rsearchindex(s, t, i)
+    if isempty(t)
+        return 1 <= i <= nextind(s,endof(s)) ? i :
+               error(BoundsError)
+    end
+    t = RevString(t)
+    rs = RevString(s)
+    l = endof(s)
+    t1, j2 = next(t,start(t))
+    while true
+        i = rsearch(s,t1,i)
+        if i == 0 return 0 end
+        c, ii = next(rs,l-i+1)
+        j = j2; k = ii
+        matched = true
+        while !done(t,j)
+            if done(rs,k)
+                matched = false
+                break
+            end
+            c, k = next(rs,k)
+            d, j = next(t,j)
+            if c != d
+                matched = false
+                break
+            end
+        end
+        if matched
+            return nextind(s,l-k+1)
+        end
+        i = l-ii+1
+    end
+end
+
+function _rsearchindex(s::Array, t::Array, k)
+    n = length(t)
+    m = length(s)
+
+    if n == 0
+        return 0 <= k <= m ? max(k, 1) : 0
+    elseif m == 0
+        return 0
+    elseif n == 1
+        return rsearch(s, t[1], k)
+    end
+
+    w = m - n
+    if w < 0 || k <= 0
+        return 0
+    end
+
+    bloom_mask = uint64(0)
+    skip = n - 1
+    tfirst = t[1]
+    for j in n:-1:1
+        bloom_mask |= _search_bloom_mask(t[j])
+        if t[j] == tfirst && j > 1
+            skip = j - 2
+        end
+    end
+
+    i = min(k - n + 1, w + 1)
+    while i > 0
+        if s[i] == tfirst
+            # check candidate
+            j = 1
+            while j < n
+                if s[i+j] != t[j+1]
+                    break
+                end
+                j += 1
+            end
+
+            # match found
+            if j == n
+                return i
+            end
+
+            # no match, try to rule out the next character
+            if i > 1 && bloom_mask & _search_bloom_mask(s[i-1]) == 0
+                i -= n
+            else
+                i -= skip
+            end
+        elseif i > 1
+            if bloom_mask & _search_bloom_mask(s[i-1]) == 0
+                i -= n
+            end
+        end
+        i -= 1
+    end
+
+    0
+end
+
+rsearchindex(s::Union(Array{Uint8,1},Array{Int8,1}),t::Union(Array{Uint8,1},Array{Int8,1}),i) = _rsearchindex(s,t,i)
+rsearchindex(s::String, t::String, i::Integer) = _rsearchindex(s,t,i)
+rsearchindex(s::String, t::String) = (isempty(s) && isempty(t)) ? 1 : rsearchindex(s,t,endof(s))
+
+function rsearchindex(s::ByteString, t::ByteString)
+    if length(t) == 1
+        rsearch(s, t[1])
+    else
+        rsearchindex(s.data, t.data, length(s.data))
+    end
+end
+
+function rsearchindex(s::ByteString, t::ByteString, i::Integer)
+    if length(t) == 1
+        rsearch(s, t[1], i)
+    else
+        rsearchindex(s.data, t.data, i)
+    end
+end
+
+function rsearch(s::Union(Array{Uint8,1},Array{Int8,1}),t::Union(Array{Uint8,1},Array{Int8,1}),i)
+    idx = rsearchindex(s,t,i)
+    if isempty(t)
+        idx:idx-1
+    else
+        idx:(idx > 0 ? idx + endof(t) - 1 : -1)
+    end
+end
+
+function rsearch(s::String, t::String, i::Integer=endof(s))
+    idx = rsearchindex(s,t,i)
+    if isempty(t)
+        idx:idx-1
+    else
+        idx:(idx > 0 ? idx + endof(t) - 1 : -1)
+    end
+end
+
+contains(a::String, b::String) = searchindex(a,b)!=0
+
+in(::String, ::String) = error("use contains(x,y) for string containment")
 
 function cmp(a::String, b::String)
+    if a === b
+        return 0
+    end
     i = start(a)
     j = start(b)
     while !done(a,i) && !done(b,i)
@@ -256,11 +485,9 @@ end
 isequal(a::String, b::String) = cmp(a,b) == 0
 isless(a::String, b::String)  = cmp(a,b) <  0
 
-hash(s::String) = hash(bytestring(s))
-
 # begins with and ends with predicates
 
-function begins_with(a::String, b::String)
+function beginswith(a::String, b::String)
     i = start(a)
     j = start(b)
     while !done(a,i) && !done(b,i)
@@ -270,11 +497,11 @@ function begins_with(a::String, b::String)
     end
     done(b,i)
 end
-begins_with(a::String, c::Char) = length(a) > 0 && a[start(a)] == c
+beginswith(a::String, c::Char) = !isempty(a) && a[start(a)] == c
 
-function ends_with(a::String, b::String)
-    i = thisind(a,length(a))
-    j = thisind(b,length(b))
+function endswith(a::String, b::String)
+    i = endof(a)
+    j = endof(b)
     a1 = start(a)
     b1 = start(b)
     while a1 <= i && b1 <= j
@@ -286,93 +513,181 @@ function ends_with(a::String, b::String)
     end
     j < b1
 end
-ends_with(a::String, c::Char) = length(a) > 0 && a[thisind(a,end)] == c
+endswith(a::String, c::Char) = !isempty(a) && a[end] == c
 
 # faster comparisons for byte strings
 
-cmp(a::ByteString, b::ByteString)     = cmp(a.data, b.data)
-isequal(a::ByteString, b::ByteString) = length(a)==length(b) && cmp(a,b)==0
+cmp(a::ByteString, b::ByteString)     = lexcmp(a.data, b.data)
+isequal(a::ByteString, b::ByteString) = endof(a)==endof(b) && cmp(a,b)==0
+beginswith(a::ByteString, b::ByteString) = beginswith(a.data, b.data)
 
-# TODO: fast begins_with and ends_with
+beginswith(a::Array{Uint8,1}, b::Array{Uint8,1}) =
+    (length(a) >= length(b) && ccall(:strncmp, Int32, (Ptr{Uint8}, Ptr{Uint8}, Uint), a, b, length(b)) == 0)
+
+cmp(a::Symbol, b::Symbol) =
+    int(sign(ccall(:strcmp, Int32, (Ptr{Uint8}, Ptr{Uint8}), a, b)))
+isless(a::Symbol, b::Symbol) = cmp(a,b)<0
+
+# TODO: fast endswith
 
 ## character column width function ##
 
-charwidth(c::Char) = max(0,int(ccall(:wcwidth, Int32, (Char,), c)))
+charwidth(c::Char) = max(0,int(ccall(:wcwidth, Int32, (Uint32,), c)))
 strwidth(s::String) = (w=0; for c in s; w += charwidth(c); end; w)
-strwidth(s::ByteString) = ccall(:u8_strwidth, Int, (Ptr{Uint8},), s.data)
+strwidth(s::ByteString) = int(ccall(:u8_strwidth, Csize_t, (Ptr{Uint8},), s.data))
 # TODO: implement and use u8_strnwidth that takes a length argument
 
-## generic string uses only length and next ##
+## libc character class predicates ##
 
-type GenericString <: String
+isascii(c::Char) = c < 0x80
+isascii(s::String) = all(isascii, s)
+isascii(s::ASCIIString) = true
+
+for name = ("alnum", "alpha", "cntrl", "digit", "graph",
+            "lower", "print", "punct", "space", "upper")
+    f = symbol(string("is",name))
+    @eval ($f)(c::Char) = bool(ccall($(string("isw",name)), Int32, (Cwchar_t,), c))
+    @eval $f(s::String) = all($f, s)
+end
+
+isblank(c::Char) = c==' ' || c=='\t'
+isblank(s::String) = all(isblank, s)
+
+## generic string uses only endof and next ##
+
+immutable GenericString <: String
     string::String
 end
 
-length(s::GenericString) = length(s.string)
+endof(s::GenericString) = endof(s.string)
 next(s::GenericString, i::Int) = next(s.string, i)
 
 ## plain old character arrays ##
 
-type CharString <: String
-    chars::Array{Char,1}
+immutable UTF32String <: DirectIndexString
+    data::Array{Char,1}
 
-    CharString(a::Array{Char,1}) = new(a)
-    CharString(c::Char...) = new([ c[i] for i=1:length(c) ])
+    UTF32String(a::Array{Char,1}) = new(a)
+    UTF32String(c::Char...) = new([ c[i] for i=1:length(c) ])
 end
-CharString(x...) = CharString(map(char,x)...)
+UTF32String(x...) = UTF32String(map(char,x)...)
 
-next(s::CharString, i::Int) = (s.chars[i], i+1)
-length(s::CharString) = length(s.chars)
-strlen(s::CharString) = length(s)
+next(s::UTF32String, i::Int) = (s.data[i], i+1)
+endof(s::UTF32String) = length(s.data)
+length(s::UTF32String) = length(s.data)
+
+utf32(x) = convert(UTF32String, x)
+convert(::Type{UTF32String}, s::UTF32String) = s
+convert(::Type{UTF32String}, s::String) = UTF32String(Char[c for c in s])
+convert{T<:String}(::Type{T}, v::Vector{Char}) = convert(T, UTF32String(v))
+convert(::Type{Array{Char,1}}, s::UTF32String) = s.data
+convert(::Type{Array{Char}}, s::UTF32String) = s.data
+
+reverse(s::UTF32String) = UTF32String(reverse(s.data))
+
+sizeof(s::UTF32String) = sizeof(s.data)
+convert{T<:Union(Int32,Uint32,Char)}(::Type{Ptr{T}}, s::UTF32String) =
+    convert(Ptr{T}, s.data)
 
 ## substrings reference original strings ##
 
-type SubString{T<:String} <: String
+immutable SubString{T<:String} <: String
     string::T
     offset::Int
-    length::Int
+    endof::Int
 
-    SubString(s::T, i::Int, j::Int) =
-        (o=nextind(s,i-1)-1; new(s,o,nextind(s,j)-o-1))
+    function SubString(s::T, i::Int, j::Int)
+        if i > endof(s) || j<i
+            return new(s, i, 0)
+        else
+            if !isvalid(s,i)
+                error("invalid SubString indexes")
+            end
+
+            while !isvalid(s,j) && j > i
+                j -= 1
+            end
+
+            o = i-1
+            new(s, o, max(0, j-o))
+        end
+    end
 end
 SubString{T<:String}(s::T, i::Int, j::Int) = SubString{T}(s, i, j)
 SubString(s::SubString, i::Int, j::Int) = SubString(s.string, s.offset+i, s.offset+j)
 SubString(s::String, i::Integer, j::Integer) = SubString(s, int(i), int(j))
-SubString(s::String, i::Integer) = SubString(s, i, length(s))
+SubString(s::String, i::Integer) = SubString(s, i, endof(s))
+
+write{T<:ByteString}(to::IOBuffer, s::SubString{T}) =
+    s.endof==0 ? 0 : write_sub(to, s.string.data, s.offset+1, next(s,s.endof)[2]-1)
+print(io::IOBuffer, s::SubString) = write(io, s)
+
+sizeof{T<:ByteString}(s::SubString{T}) = s.endof==0 ? 0 : next(s,s.endof)[2]-1
 
 function next(s::SubString, i::Int)
-    if i < 1 || i > s.length
+    if i < 1 || i > s.endof
         error(BoundsError)
     end
     c, i = next(s.string, i+s.offset)
     c, i-s.offset
 end
 
-length(s::SubString) = s.length
-# TODO: strlen(s::SubString) = ??
+function getindex(s::SubString, i::Int)
+    if i < 1 || i > s.endof
+        error(BoundsError)
+    end
+    getindex(s.string, i+s.offset)
+end
+
+isempty(s::SubString) = s.endof == 0
+
+endof(s::SubString) = s.endof
+# TODO: length(s::SubString) = ??
 # default implementation will work but it's slow
 # can this be delegated efficiently somehow?
 # that may require additional string interfaces
 
-function ref(s::String, r::Range1{Int})
-    if first(r) < 1 || length(s) < last(r)
+nextind(s::SubString, i::Integer) = nextind(s.string, i+s.offset)-s.offset
+prevind(s::SubString, i::Integer) = prevind(s.string, i+s.offset)-s.offset
+
+convert{T<:String}(::Type{SubString{T}}, s::T) = SubString(s, 1, endof(s))
+
+bytestring{T <: ByteString}(p::SubString{T}) = bytestring(pointer(p.string.data)+p.offset, nextind(p, p.endof)-1)
+
+function serialize{T}(s, ss::SubString{T})
+    # avoid saving a copy of the parent string, keeping the type of ss
+    invoke(serialize, (Any,Any), s, convert(SubString{T}, convert(T,ss)))
+end
+
+function getindex(s::String, r::Range1{Int})
+    if first(r) < 1 || endof(s) < last(r)
         error(BoundsError)
     end
     SubString(s, first(r), last(r))
 end
 
+function convert{P<:Union(Int8,Uint8),T<:ByteString}(::Type{Ptr{P}}, s::SubString{T})
+    if s.offset+s.endof < endof(s.string)
+        error("a SubString must coincide with the end of the original string to be convertible to pointer")
+    end
+    convert(Ptr{P}, s.string.data) + s.offset
+end
+
+isascii(s::SubString{ASCIIString}) = true
+
 ## efficient representation of repeated strings ##
 
-type RepString <: String
+immutable RepString <: String
     string::String
     repeat::Integer
 end
 
+endof(s::RepString)  = endof(s.string)*s.repeat
 length(s::RepString) = length(s.string)*s.repeat
-strlen(s::RepString) = strlen(s.string)*s.repeat
+sizeof(s::RepString) = sizeof(s.string)*s.repeat
 
 function next(s::RepString, i::Int)
-    if i < 1 || i > length(s)
+    if i < 1 || i > endof(s)
         error(BoundsError)
     end
     j = mod1(i,length(s.string))
@@ -389,49 +704,63 @@ end
 
 convert(::Type{RepString}, s::String) = RepString(s,1)
 
-## reversed strings without data movement ##
-
-type RevString <: String
-    string::String
+function repeat(s::ByteString, r::Integer)
+    if r < 0
+        error("can't repeat a string ",r," times")
+    end
+    d = s.data; n = length(d)
+    out = Array(Uint8, n*r)
+    for i=1:r
+        copy!(out, 1+(i-1)*n, d, 1, n)
+    end
+    convert(typeof(s), out)
 end
 
-length(s::RevString) = length(s.string)
-strlen(s::RevString) = strlen(s.string)
+## reversed strings without data movement ##
 
-start(s::RevString) = (n=length(s); n-thisind(s.string,n)+1)
+immutable RevString{T<:String} <: String
+    string::T
+end
+
+endof(s::RevString) = endof(s.string)
+length(s::RevString) = length(s.string)
+sizeof(s::RevString) = sizeof(s.string)
+
 function next(s::RevString, i::Int)
-    n = length(s); j = n-i+1
-    (s.string[j], n-thisind(s.string,j-1)+1)
+    n = endof(s); j = n-i+1
+    (s.string[j], n-prevind(s.string,j)+1)
 end
 
 reverse(s::String) = RevString(s)
 reverse(s::RevString) = s.string
 
+isascii(s::RevString{ASCIIString}) = true
+
 ## ropes for efficient concatenation, etc. ##
 
-type RopeString <: String
+immutable RopeString <: String
     head::String
     tail::String
     depth::Int32
-    length::Int
+    endof::Int
 
     RopeString(h::RopeString, t::RopeString) =
         strdepth(h.tail) + strdepth(t) < strdepth(h.head) ?
             RopeString(h.head, RopeString(h.tail, t)) :
-            new(h, t, max(h.depth,t.depth)+1, length(h)+length(t))
+            new(h, t, max(h.depth,t.depth)+1, endof(h)+endof(t))
 
     RopeString(h::RopeString, t::String) =
         strdepth(h.tail) < strdepth(h.head) ?
             RopeString(h.head, RopeString(h.tail, t)) :
-            new(h, t, h.depth+1, length(h)+length(t))
+            new(h, t, h.depth+1, endof(h)+endof(t))
 
     RopeString(h::String, t::RopeString) =
         strdepth(t.head) < strdepth(t.tail) ?
             RopeString(RopeString(h, t.head), t.tail) :
-            new(h, t, t.depth+1, length(h)+length(t))
+            new(h, t, t.depth+1, endof(h)+endof(t))
 
     RopeString(h::String, t::String) =
-        new(h, t, 1, length(h)+length(t))
+        new(h, t, 1, endof(h)+endof(t))
 end
 RopeString(s::String) = RopeString(s,"")
 
@@ -439,112 +768,54 @@ strdepth(s::String) = 0
 strdepth(s::RopeString) = s.depth
 
 function next(s::RopeString, i::Int)
-    if i <= length(s.head)
+    eh = endof(s.head)
+    if i <= eh
         return next(s.head, i)
     else
-        c, j = next(s.tail, i-length(s.head))
-        return c, j+length(s.head)
+        c, j = next(s.tail, i-eh)
+        return c, j+eh
     end
 end
 
-length(s::RopeString) = s.length
-strlen(s::RopeString) = strlen(s.head) + strlen(s.tail)
-
-strcat() = ""
-strcat(s::String) = s
-strcat(s::String, t::String...) =
-    (t = strcat(t...); isempty(s) ? t : isempty(t) ? s : RopeString(s, t))
-strcat(xs...) = string(xs...)  # backwards compat
-
+endof(s::RopeString) = s.endof
+length(s::RopeString) = length(s.head) + length(s.tail)
 print(io::IO, s::RopeString) = print(io, s.head, s.tail)
-
 write(io::IO, s::RopeString) = (write(io, s.head); write(io, s.tail))
-
-## transformed strings ##
-
-type TransformedString <: String
-    transform::Function
-    string::String
-end
-
-length(s::TransformedString) = length(s.string)
-strlen(s::TransformedString) = strlen(s.string)
-
-function next(s::TransformedString, i::Int)
-    c, j = next(s.string,i)
-    c = s.transform(c, i)
-    return c, j
-end
+sizeof(s::RopeString) = sizeof(s.head) + sizeof(s.tail)
 
 ## uppercase and lowercase transformations ##
 
-const _TF_U = (c,i)->uppercase(c)
-const _TF_L = (c,i)->lowercase(c)
-const _TF_u = (c,i)->i==1 ? uppercase(c) : c
-const _TF_l = (c,i)->i==1 ? lowercase(c) : c
-const _TF_C = (c,i)->i==1 ? uppercase(c) : lowercase(c)
-const _TF_c = (c,i)->i==1 ? lowercase(c) : uppercase(c)
+uppercase(c::Char) = convert(Char, ccall(:towupper, Cwchar_t, (Cwchar_t,), c))
+lowercase(c::Char) = convert(Char, ccall(:towlower, Cwchar_t, (Cwchar_t,), c))
 
-uppercase(c::Char) = ccall(:towupper, Char, (Char,), c)
-lowercase(c::Char) = ccall(:towlower, Char, (Char,), c)
+uppercase(s::String) = map(uppercase, s)
+lowercase(s::String) = map(lowercase, s)
 
-uppercase(c::Uint8) = ccall(:toupper, Uint8, (Uint8,), c)
-lowercase(c::Uint8) = ccall(:tolower, Uint8, (Uint8,), c)
-
-uppercase(s::String) = TransformedString(_TF_U, s)
-lowercase(s::String) = TransformedString(_TF_L, s)
-
-ucfirst(s::String) = TransformedString(_TF_u, s)
-lcfirst(s::String) = TransformedString(_TF_l, s)
-
-function _transfunc_compose(f2::Function, f1::Function)
-    allf = [_TF_U, _TF_L, _TF_u, _TF_l, _TF_C, _TF_c]
-    if !contains(allf, f2) || !contains(allf, f1)
-        return nothing
-    end
-    if f2 == _TF_U || f2 == _TF_L || f2 == _TF_C || f2 == _TF_c ||
-            f2 == f1 ||
-            (f2 == _TF_u && f1 == _TF_l) ||
-            (f2 == _TF_l && f1 == _TF_u)
-        return f2
-    elseif (f2 == _TF_u && (f1 == _TF_U || f1 == _TF_C)) ||
-           (f2 == _TF_l && (f1 == _TF_L || f1 == _TF_c))
-        return f1
-    elseif (f2 == _TF_u && f1 == _TF_L)
-        return _TF_C
-    elseif (f2 == _TF_l && f1 == _TF_U)
-        return _TF_c
-    elseif (f2 == _TF_u && f1 == _TF_c)
-        return _TF_U
-    elseif (f2 == _TF_l && f1 == _TF_C)
-        return _TF_L
-    end
-    error("this is a bug")
+function ucfirst(s::String)
+    isempty(s) || isupper(s[1]) ? s : string(uppercase(s[1]),s[nextind(s,1):end])
 end
-
-function TransformedString(transform::Function, s::TransformedString)
-    newtf = _transfunc_compose(transform, s.transform)
-    if newtf === nothing
-        return invoke(TransformedString, (Function, String), transform, s)
-    end
-    TransformedString(newtf, s.string)
+function lcfirst(s::String)
+    isempty(s) || islower(s[1]) ? s : string(lowercase(s[1]),s[nextind(s,1):end])
 end
-
-const uc = uppercase
-const lc = lowercase
 
 ## string map, filter, has ##
 
 function map(f::Function, s::String)
-    out = memio(length(s))
+    out = IOBuffer(Array(Uint8,endof(s)),true,true)
+    truncate(out,0)
     for c in s
-        write(out, f(c)::Char)
+        c2 = f(c)
+        if !isa(c2,Char)
+            error("map(f,s::String) requires f to return Char; try map(f,collect(s)) or a comprehension instead")
+        end
+        write(out, c2::Char)
     end
     takebuf_string(out)
 end
 
 function filter(f::Function, s::String)
-    out = memio(length(s))
+    out = IOBuffer(Array(Uint8,endof(s)),true,true)
+    truncate(out,0)
     for c in s
         if f(c)
             write(out, c)
@@ -553,18 +824,13 @@ function filter(f::Function, s::String)
     takebuf_string(out)
 end
 
-has(s::String, c::Char) = contains(s, c)
-
 ## string promotion rules ##
 
-promote_rule(::Type{UTF8String} , ::Type{ASCIIString}) = UTF8String
-promote_rule(::Type{UTF8String} , ::Type{CharString} ) = UTF8String
-promote_rule(::Type{ASCIIString}, ::Type{CharString} ) = UTF8String
-promote_rule{T<:String}(::Type{RepString}, ::Type{T}) = RepString
+promote_rule{S<:String,T<:String}(::Type{S}, ::Type{T}) = UTF8String
 
 ## printing literal quoted string data ##
 
-# TODO: this is really the inverse of print_unbackslashed
+# this is the inverse of print_unescaped_chars(io, s, "\\\")
 
 function print_quoted_literal(io, s::String)
     print(io, '"')
@@ -575,46 +841,46 @@ end
 ## string escaping & unescaping ##
 
 escape_nul(s::String, i::Int) =
-    !done(s,i) && '0' <= next(s,i)[1] <= '7' ? L"\x00" : L"\0"
+    !done(s,i) && '0' <= next(s,i)[1] <= '7' ? "\\x00" : "\\0"
 
-is_hex_digit(c::Char) = '0'<=c<='9' || 'a'<=c<='f' || 'A'<=c<='F'
-need_full_hex(s::String, i::Int) = !done(s,i) && is_hex_digit(next(s,i)[1])
+isxdigit(c::Char) = '0'<=c<='9' || 'a'<=c<='f' || 'A'<=c<='F'
+isxdigit(s::String) = all(isxdigit, s)
+need_full_hex(s::String, i::Int) = !done(s,i) && isxdigit(next(s,i)[1])
 
 function print_escaped(io, s::String, esc::String)
     i = start(s)
     while !done(s,i)
         c, j = next(s,i)
         c == '\0'       ? print(io, escape_nul(s,j)) :
-        c == '\e'       ? print(io, L"\e") :
+        c == '\e'       ? print(io, "\\e") :
         c == '\\'       ? print(io, "\\\\") :
-        contains(esc,c) ? print(io, '\\', c) :
-        7 <= c <= 13    ? print(io, '\\', "abtnvfr"[c-6]) :
-        iswprint(c)     ? print(io, c) :
-        c <= '\x7f'     ? print(io, L"\x", hex(c, 2)) :
-        c <= '\uffff'   ? print(io, L"\u", hex(c, need_full_hex(s,j) ? 4 : 2)) :
-                          print(io, L"\U", hex(c, need_full_hex(s,j) ? 8 : 4))
+        in(c,esc)       ? print(io, '\\', c) :
+        7 <= c <= 13    ? print(io, '\\', "abtnvfr"[int(c-6)]) :
+        isprint(c)      ? print(io, c) :
+        c <= '\x7f'     ? print(io, "\\x", hex(c, 2)) :
+        c <= '\uffff'   ? print(io, "\\u", hex(c, need_full_hex(s,j) ? 4 : 2)) :
+                          print(io, "\\U", hex(c, need_full_hex(s,j) ? 8 : 4))
         i = j
     end
 end
 
-escape_string(s::String) = sprint(length(s), print_escaped, s, "\"")
+escape_string(s::String) = sprint(endof(s), print_escaped, s, "\"")
 function print_quoted(io, s::String)
     print(io, '"')
     print_escaped(io, s, "\"\$") #"# work around syntax highlighting problem
     print(io, '"')
 end
-quote_string(s::String) = sprint(length(s)+2, io->print_quoted(io,s))
 
 # bare minimum unescaping function unescapes only given characters
 
 function print_unescaped_chars(io, s::String, esc::String)
-    if !contains(esc,'\\')
+    if !in('\\',esc)
         esc = string("\\", esc)
     end
     i = start(s)
     while !done(s,i)
         c, i = next(s,i)
-        if c == '\\' && !done(s,i) && contains(esc,s[i])
+        if c == '\\' && !done(s,i) && in(s[i],esc)
             c, i = next(s,i)
         end
         print(io, c)
@@ -622,7 +888,7 @@ function print_unescaped_chars(io, s::String, esc::String)
 end
 
 unescape_chars(s::String, esc::String) =
-    sprint(length(s), print_unescaped_chars, s, esc)
+    sprint(endof(s), print_unescaped_chars, s, esc)
 
 # general unescaping of traditional C and Unicode escape sequences
 
@@ -679,80 +945,122 @@ function print_unescaped(io, s::String)
     end
 end
 
-unescape_string(s::String) = sprint(length(s), print_unescaped, s)
+unescape_string(s::String) = sprint(endof(s), print_unescaped, s)
 
 ## checking UTF-8 & ACSII validity ##
 
-byte_string_classify(s::ByteString) =
-    ccall(:u8_isvalid, Int32, (Ptr{Uint8}, Int), s.data, length(s))
+byte_string_classify(data::Array{Uint8,1}) =
+    ccall(:u8_isvalid, Int32, (Ptr{Uint8}, Int), data, length(data))
+byte_string_classify(s::ByteString) = byte_string_classify(s.data)
     # 0: neither valid ASCII nor UTF-8
     # 1: valid ASCII
     # 2: valid UTF-8
 
-is_valid_ascii(s::ByteString) = byte_string_classify(s) == 1
-is_valid_utf8 (s::ByteString) = byte_string_classify(s) != 0
+is_valid_ascii(s::Union(Array{Uint8,1},ByteString)) = byte_string_classify(s) == 1
+is_valid_utf8 (s::Union(Array{Uint8,1},ByteString)) = byte_string_classify(s) != 0
 
-check_ascii(s::ByteString) = is_valid_ascii(s) ? s : error("invalid ASCII sequence")
-check_utf8 (s::ByteString) = is_valid_utf8(s)  ? s : error("invalid UTF-8 sequence")
+## multiline strings ##
 
-## string interpolation parsing ##
-
-function _jl_interp_parse(s::String, unescape::Function, printer::Function)
-    sx = {}
-    i = j = start(s)
-    while !done(s,j)
-        c, k = next(s,j)
-        if c == '$'
-            if !isempty(s[i:j-1])
-                push(sx, unescape(s[i:j-1]))
-            end
-            ex, j = parseatom(s,k)
-            if isa(ex,Expr) && is(ex.head,:continue)
-                throw(ParseError("incomplete expression"))
-            end
-            push(sx, esc(ex))
-            i = j
-        elseif c == '\\' && !done(s,k)
-            if s[k] == '$'
-                if !isempty(s[i:j-1])
-                    push(sx, unescape(s[i:j-1]))
-                end
-                i = k
-            end
-            c, j = next(s,k)
-        else
-            j = k
-        end
-    end
-    if !isempty(s[i:])
-        push(sx, unescape(s[i:j-1]))
-    end
-    length(sx) == 1 && isa(sx[1],ByteString) ? sx[1] :
-        expr(:call, :sprint, printer, sx...)
+function blank_width(c::Char)
+    c == ' '   ? 1 :
+    c == '\t'  ? 8 :
+    error("not a blank character")
 end
 
-_jl_interp_parse(s::String, u::Function) = _jl_interp_parse(s, u, print)
-_jl_interp_parse(s::String) = _jl_interp_parse(s, x->check_utf8(unescape_string(x)))
+# width of leading blank space, also check if string is blank
+function indentation(s::String)
+    count = 0
+    for c in s
+        if isblank(c)
+            count += blank_width(c)
+        else
+            return count, false
+        end
+    end
+    count, true
+end
 
-function _jl_interp_parse_bytes(s::String)
-    writer(io,x...) = for w=x; write(io,w); end
-    _jl_interp_parse(s, unescape_string, writer)
+function unindent(s::String, indent::Int)
+    buf = IOBuffer(Array(Uint8,endof(s)), true, true)
+    truncate(buf,0)
+    a = i = start(s)
+    cutting = false
+    cut = 0
+    while !done(s,i)
+        c,i_ = next(s,i)
+        if cutting && isblank(c)
+            a = i_
+            cut += blank_width(c)
+            if cut > indent
+                cutting = false
+                for _ = (indent+1):cut write(buf, ' ') end
+            end
+        elseif c == '\n'
+            print(buf, s[a:i])
+            a = i_
+            cutting = true
+            cut = 0
+        else
+            cutting = false
+        end
+        i = i_
+    end
+    print(buf, s[a:end])
+    takebuf_string(buf)
+end
+
+function triplequoted(args...)
+    sx = { isa(arg,ByteString) ? arg : esc(arg) for arg in args }
+
+    indent = 0
+    rlines = split(RevString(sx[end]), '\n', 2)
+    last_line = rlines[1]
+    if length(rlines) > 1 && lstrip(last_line) == ""
+        indent,_ = indentation(last_line)
+    else
+        indent = typemax(Int)
+        for s in sx
+            if isa(s,ByteString)
+                lines = split(s,'\n')
+                for line in lines[2:end]
+                    n,blank = indentation(line)
+                    if !blank
+                        indent = min(indent, n)
+                    end
+                end
+            end
+        end
+    end
+
+    for i in 1:length(sx)
+        if isa(sx[i],ByteString)
+            sx[i] = unindent(sx[i], indent)
+        end
+    end
+
+    # strip leading blank line
+    s = sx[1]
+    j = search(s,'\n')
+    if j != 0 && lstrip(s[1:j]) == ""
+        sx[1] = s[j+1:end]
+    end
+
+    length(sx) == 1 ? sx[1] : Expr(:call, :string, sx...)
 end
 
 ## core string macros ##
 
-macro   str(s); _jl_interp_parse(s); end
-macro S_str(s); _jl_interp_parse(s); end
-macro I_str(s); _jl_interp_parse(s, x->unescape_chars(x,"\"")); end
-macro E_str(s); check_utf8(unescape_string(s)); end
-macro B_str(s); _jl_interp_parse_bytes(s); end
-macro b_str(s); ex = _jl_interp_parse_bytes(s); :(($ex).data); end
+macro b_str(s); :($(unescape_string(s)).data); end
+
+macro mstr(s...); triplequoted(s...); end
 
 ## shell-like command parsing ##
 
-function _jl_shell_parse(raw::String, interp::Bool)
-
+function shell_parse(raw::String, interp::Bool)
     s = strip(raw)
+    last_parse = 0:-1
+    isempty(s) && return interp ? (Expr(:tuple,:()),last_parse) : ({},last_parse)
+
     in_single_quotes = false
     in_double_quotes = false
 
@@ -763,24 +1071,24 @@ function _jl_shell_parse(raw::String, interp::Bool)
 
     function update_arg(x)
         if !isa(x,String) || !isempty(x)
-            push(arg, x)
+            push!(arg, x)
         end
     end
     function append_arg()
         if isempty(arg); arg = {"",}; end
-        push(args, arg)
+        push!(args, arg)
         arg = {}
     end
 
     while !done(s,j)
         c, k = next(s,j)
-        if !in_single_quotes && !in_double_quotes && iswspace(c)
+        if !in_single_quotes && !in_double_quotes && isspace(c)
             update_arg(s[i:j-1])
             append_arg()
             j = k
             while !done(s,j)
                 c, k = next(s,j)
-                if !iswspace(c)
+                if !isspace(c)
                     i = j
                     break
                 end
@@ -791,10 +1099,12 @@ function _jl_shell_parse(raw::String, interp::Bool)
             if done(s,k)
                 error("\$ right before end of command")
             end
-            if iswspace(s[k])
+            if isspace(s[k])
                 error("space not allowed right after \$")
             end
-            ex, j = parseatom(s,j)
+            stpos = j
+            ex, j = parse(s,j,greedy=false)
+            last_parse = stpos:j
             update_arg(esc(ex)); i = j
         else
             if !in_double_quotes && c == '\''
@@ -827,39 +1137,39 @@ function _jl_shell_parse(raw::String, interp::Bool)
     if in_single_quotes; error("unterminated single quote"); end
     if in_double_quotes; error("unterminated double quote"); end
 
-    update_arg(s[i:])
+    update_arg(s[i:end])
     append_arg()
 
     if !interp
-        return args
+        return (args,last_parse)
     end
 
     # construct an expression
-    exprs = {}
+    ex = Expr(:tuple)
     for arg in args
-        push(exprs, expr(:tuple, arg))
+        push!(ex.args, Expr(:tuple, arg...))
     end
-    expr(:tuple,exprs)
+    (ex,last_parse)
 end
-_jl_shell_parse(s::String) = _jl_shell_parse(s,true)
+shell_parse(s::String) = shell_parse(s,true)
 
 function shell_split(s::String)
-    parsed = _jl_shell_parse(s,false)
+    parsed = shell_parse(s,false)[1]
     args = String[]
     for arg in parsed
-       push(args, string(arg...))
+       push!(args, string(arg...))
     end
     args
 end
 
-function print_shell_word(io, word::String)
+function print_shell_word(io::IO, word::String)
     if isempty(word)
         print(io, "''")
     end
     has_single = false
     has_special = false
     for c in word
-        if iswspace(c) || c=='\\' || c=='\'' || c=='"' || c=='$'
+        if isspace(c) || c=='\\' || c=='\'' || c=='"' || c=='$'
             has_special = true
             if c == '\''
                 has_single = true
@@ -882,42 +1192,49 @@ function print_shell_word(io, word::String)
     end
 end
 
-function print_shell_escaped(io, cmd::String, args::String...)
+function print_shell_escaped(io::IO, cmd::String, args::String...)
     print_shell_word(io, cmd)
     for arg in args
         print(io, ' ')
         print_shell_word(io, arg)
     end
 end
+print_shell_escaped(io::IO) = nothing
 
-shell_escape(cmd::String, args::String...) =
-    sprint(print_shell_escaped, cmd, args...)
+shell_escape(args::String...) = sprint(print_shell_escaped, args...)
 
 ## interface to parser ##
 
-function parse(s::String, pos, greedy)
+function parse(str::String, pos::Int; greedy::Bool=true, raise::Bool=true)
     # returns (expr, end_pos). expr is () in case of parse error.
     ex, pos = ccall(:jl_parse_string, Any,
                     (Ptr{Uint8}, Int32, Int32),
-                    s, pos-1, greedy ? 1:0)
-    if isa(ex,Expr) && is(ex.head,:error)
+                    str, pos-1, greedy ? 1:0)
+    if raise && isa(ex,Expr) && is(ex.head,:error)
         throw(ParseError(ex.args[1]))
     end
-    if ex == (); throw(ParseError("end of input")); end
+    if ex == ()
+        if raise
+            throw(ParseError("end of input"))
+        else
+            ex = Expr(:error, "end of input")
+        end
+    end
     ex, pos+1 # C is zero-based, Julia is 1-based
 end
 
-parse(s::String)          = parse(s, 1, true)
-parse(s::String, pos)     = parse(s, pos, true)
-parseatom(s::String)      = parse(s, 1, false)
-parseatom(s::String, pos) = parse(s, pos, false)
+function parse(str::String; raise::Bool=true)
+    ex, pos = parse(str, start(str), greedy=true, raise=raise)
+    done(str, pos) || error("extra token after end of expression")
+    return ex
+end
 
 ## miscellaneous string functions ##
 
-function lpad(s::String, n::Integer, p::String)
-    m = n - strlen(s)
+function lpad(s::String, n::Integer, p::String=" ")
+    m = n - strwidth(s)
     if m <= 0; return s; end
-    l = strlen(p)
+    l = strwidth(p)
     if l==1
         return bytestring(p^m * s)
     end
@@ -926,10 +1243,10 @@ function lpad(s::String, n::Integer, p::String)
     bytestring(p^q*p[1:chr2ind(p,r)]*s)
 end
 
-function rpad(s::String, n::Integer, p::String)
-    m = n - strlen(s)
+function rpad(s::String, n::Integer, p::String=" ")
+    m = n - strwidth(s)
     if m <= 0; return s; end
-    l = strlen(p)
+    l = strwidth(p)
     if l==1
         return bytestring(s * p^m)
     end
@@ -938,32 +1255,33 @@ function rpad(s::String, n::Integer, p::String)
     bytestring(s*p^q*p[1:chr2ind(p,r)])
 end
 
-lpad(s, n::Integer, p) = lpad(string(s), n, string(p))
-rpad(s, n::Integer, p) = rpad(string(s), n, string(p))
+lpad(s, n::Integer, p=" ") = lpad(string(s),n,string(p))
+rpad(s, n::Integer, p=" ") = rpad(string(s),n,string(p))
+cpad(s, n::Integer, p=" ") = rpad(lpad(s,div(n+strwidth(s),2),p),n,p)
 
-lpad(s, n::Integer) = lpad(string(s), n, " ")
-rpad(s, n::Integer) = rpad(string(s), n, " ")
 
 # splitter can be a Char, Vector{Char}, String, Regex, ...
 # any splitter that provides search(s::String, splitter)
-
-function split(str::String, splitter, limit::Integer, keep_empty::Bool)
-    strs = String[]
+split{T<:SubString}(str::T, splitter, limit::Integer, keep_empty::Bool) = _split(str, splitter, limit, keep_empty, T[])
+split{T<:String}(str::T, splitter, limit::Integer, keep_empty::Bool) = _split(str, splitter, limit, keep_empty, SubString{T}[])
+function _split{T<:String,U<:Array}(str::T, splitter, limit::Integer, keep_empty::Bool, strs::U)
     i = start(str)
-    n = length(str)
-    j, k = search(str,splitter,i)
+    n = endof(str)
+    r = search(str,splitter,i)
+    j, k = first(r), nextind(str,last(r))
     while 0 < j <= n && length(strs) != limit-1
         if i < k
             if keep_empty || i < j
-                push(strs, str[i:j-1])
+                push!(strs, SubString(str,i,prevind(str,j)))
             end
             i = k
         end
         if k <= j; k = nextind(str,j) end
-        j, k = search(str,splitter,k)
+        r = search(str,splitter,k)
+        j, k = first(r), nextind(str,last(r))
     end
     if keep_empty || !done(str,i)
-        push(strs, str[i:])
+        push!(strs, SubString(str,i))
     end
     return strs
 end
@@ -973,47 +1291,67 @@ split(s::String, spl)             = split(s, spl, 0, true)
 
 # a bit oddball, but standard behavior in Perl, Ruby & Python:
 const _default_delims = [' ','\t','\n','\v','\f','\r']
-split(str::String) = split(str, _default_delims, 0, false)
+split(str::String)                = split(str, _default_delims, 0, false)
+
+
+rsplit{T<:SubString}(str::T, splitter, limit::Integer, keep_empty::Bool) = _rsplit(str, splitter, limit, keep_empty, T[])
+rsplit{T<:String}(str::T, splitter, limit::Integer, keep_empty::Bool) = _rsplit(str, splitter, limit, keep_empty, SubString{T}[])
+function _rsplit{T<:String,U<:Array}(str::T, splitter, limit::Integer, keep_empty::Bool, strs::U)
+    i = start(str)
+    n = endof(str)
+    r = rsearch(str,splitter)
+    j = first(r)-1
+    k = last(r)
+    while((0 <= j < n) && (length(strs) != limit-1))
+        if i <= k
+            (keep_empty || (k < n)) && unshift!(strs, SubString(str,k+1,n))
+            n = j
+        end
+        (k <= j) && (j = prevind(str,j))
+        r = rsearch(str,splitter,j)
+        j = first(r)-1
+        k = last(r)
+    end
+    (keep_empty || (n > 0)) && unshift!(strs, SubString(str,1,n))
+    return strs
+end
+rsplit(s::String, spl, n::Integer) = rsplit(s, spl, n, true)
+rsplit(s::String, spl, keep::Bool) = rsplit(s, spl, 0, keep)
+rsplit(s::String, spl)             = rsplit(s, spl, 0, true)
+#rsplit(str::String) = rsplit(str, _default_delims, 0, false)
 
 function replace(str::ByteString, pattern, repl::Function, limit::Integer)
     n = 1
-    rstr = ""
+    e = endof(str)
     i = a = start(str)
-    j, k = search(str,pattern,i)
+    r = search(str,pattern,i)
+    j, k = first(r), last(r)
+    out = IOBuffer()
     while j != 0
-        if i == a || i < k
-            rstr = RopeString(rstr,SubString(str,i,j-1))
-            rstr = RopeString(rstr,string(repl(SubString(str,j,k-1))))
-            i = k
+        if i == a || i <= k
+            write(out, SubString(str,i,prevind(str,j)))
+            write(out, string(repl(SubString(str,j,k))))
         end
-        if k <= j; k = nextind(str,j) end
-        j, k = search(str,pattern,k)
-        if n == limit break end
+        if k<j
+            i = j
+            k = nextind(str, j)
+        else
+            i = k = nextind(str, k)
+        end
+        if j > e
+            break
+        end
+        r = search(str,pattern,k)
+        j, k = first(r), last(r)
+        n == limit && break
         n += 1
     end
-    rstr = RopeString(rstr,SubString(str,i))
-    bytestring(rstr)
+    write(out, SubString(str,i))
+    takebuf_string(out)
 end
 replace(s::String, pat, f::Function, n::Integer) = replace(bytestring(s), pat, f, n)
 replace(s::String, pat, r, n::Integer) = replace(s, pat, x->r, n)
 replace(s::String, pat, r) = replace(s, pat, r, 0)
-
-function search_count(str::String, pattern, limit::Integer)
-    n = 0
-    i = a = start(str)
-    j, k = search(str,pattern,i)
-    while j != 0
-        if i == a || i < k
-            n += 1
-            if n == limit break end
-            i = k
-        end
-        if k <= j; k = nextind(str,j) end
-        j, k = search(str,pattern,k)
-    end
-    return n
-end
-search_count(s::String, pat) = search_count(s, pat, 0)
 
 function print_joined(io, strings, delim, last)
     i = start(strings)
@@ -1043,24 +1381,34 @@ print_joined(io, strings) = print_joined(io, strings, "")
 
 join(args...) = sprint(print_joined, args...)
 
-chop(s::String) = s[1:thisind(s,length(s))-1]
+chop(s::String) = s[1:end-1]
 
 function chomp(s::String)
-    i = thisind(s,length(s))
+    i = endof(s)
     if (i < 1 || s[i] != '\n') return s end
     j = prevind(s,i)
     if (j < 1 || s[j] != '\r') return s[1:i-1] end
     return s[1:j-1]
 end
 chomp(s::ByteString) =
-    (length(s) < 1 || s.data[end]   != 0x0a) ? s :
-    (length(s) < 2 || s.data[end-1] != 0x0d) ? s[1:end-1] : s[1:end-2]
+    (endof(s) < 1 || s.data[end]   != 0x0a) ? s :
+    (endof(s) < 2 || s.data[end-1] != 0x0d) ? s[1:end-1] : s[1:end-2]
 
-function lstrip(s::String)
+# NOTE: use with caution -- breaks the immutable string convention!
+function chomp!(s::ByteString)
+    if !isempty(s) && s.data[end] == 0x0a
+        n = (endof(s) < 2 || s.data[end-1] != 0x0d) ? 1 : 2
+        ccall(:jl_array_del_end, Void, (Any, Uint), s.data, n)
+    end
+    return s
+end
+chomp!(s::String) = chomp(s) # copying fallback for other string types
+
+function lstrip(s::String, chars::Chars=_default_delims)
     i = start(s)
     while !done(s,i)
         c, j = next(s,i)
-        if !iswspace(c)
+        if !in(c, chars)
             return s[i:end]
         end
         i = j
@@ -1068,12 +1416,12 @@ function lstrip(s::String)
     ""
 end
 
-function rstrip(s::String)
-    r = reverse(s)
+function rstrip(s::String, chars::Chars=_default_delims)
+    r = RevString(s)
     i = start(r)
     while !done(r,i)
         c, j = next(r,i)
-        if !iswspace(c)
+        if !in(c, chars)
             return s[1:end-i+1]
         end
         i = j
@@ -1082,102 +1430,119 @@ function rstrip(s::String)
 end
 
 strip(s::String) = lstrip(rstrip(s))
+strip(s::String, chars::Chars) = lstrip(rstrip(s, chars), chars)
 
 ## string to integer functions ##
 
-function parse_int{T<:Integer}(::Type{T}, s::String, base::Integer)
-    if !(2 <= base <= 36); error("invalid base: ",base); end
-    i = start(s)
-    while true
-        if done(s,i)
-            throw(ArgumentError(strcat(
-                "premature end of integer (in ", repr(s) ,")"
-            )))
-        end
-        c,i = next(s,i)
-        if !iswspace(c)
-            break
-        end
-    end
-    sgn = one(T)
-    if T <: Signed && c == '-'
-        sgn = -sgn
-        if done(s,i)
-            throw(ArgumentError(strcat(
-                "premature end of integer (in ", repr(s), ")"
-            )))
-        end
-        c,i = next(s,i)
-    elseif c == '+'
-        if done(s,i)
-            throw(ArgumentError(strcat(
-                "premature end of integer (in ", repr(s), ")"
-            )))
-        end
-        c,i = next(s,i)
-    end
-    base = convert(T,base)
-    n::T = 0
-    while true
-        d = '0' <= c <= '9' ? c-'0' :
-            'A' <= c <= 'Z' ? c-'A'+10 :
-            'a' <= c <= 'z' ? c-'a'+10 : typemax(Int)
-        if d >= base
-            if !iswspace(c)
-                throw(ArgumentError(strcat(
-                    repr(c)," is not a valid digit (in ", repr(s), ")"
-                )))
-            end
-            while !done(s,i)
-                c,i = next(s,i)
-                if !iswspace(c)
-                    throw(ArgumentError(strcat(
-                        "extra characters after whitespace (in ", repr(s), ")"
-                    )))
-                end
-            end
-        else
-            # TODO: overflow detection?
-            n = n*base + d
-        end
-        if done(s,i)
-            break
-        end
-        c,i = next(s,i)
-    end
-    if T <: Signed
-        return flipsign(n,sgn)
-    else
-        return n
-    end
+function parseint(c::Char, base::Integer=36, a::Int=(base <= 36 ? 10 : 36))
+    2 <= base <= 62 || error("invalid base: $base")
+    d = '0' <= c <= '9' ? c-'0'    :
+        'A' <= c <= 'Z' ? c-'A'+10 :
+        'a' <= c <= 'z' ? c-'a'+a  : error("invalid digit: $(repr(c))")
+    d < base || error("invalid base $base digit $(repr(c))")
+    d
+end
+parseint{T<:Integer}(::Type{T}, c::Char, base::Integer) = convert(T,parseint(c,base))
+parseint{T<:Integer}(::Type{T}, c::Char) = convert(T,parseint(c))
+
+function parseint_next(s::String, i::Int=start(s))
+    done(s,i) && error("premature end of integer: $(repr(s))")
+    j = i
+    c, i = next(s,i)
+    c, i, j
 end
 
-parse_int(s::String, base::Integer) = parse_int(Int,s,base)
-parse_int(T::Type, s::String)       = parse_int(T,s,10)
-parse_int(s::String)                = parse_int(Int,s,10)
+function parseint_preamble(signed::Bool, s::String, base::Int)
+    c, i, j = parseint_next(s)
+    while isspace(c)
+        c, i, j = parseint_next(s,i)
+    end
+    sgn = 1
+    if signed
+        if c == '-' || c == '+'
+            (c == '-') && (sgn = -1)
+            c, i, j = parseint_next(s,i)
+        end
+    end
+    while isspace(c)
+        c, i, j = parseint_next(s,i)
+    end
+    if base == 0
+        if c == '0' && !done(s,i)
+            c, i = next(s,i)
+            base = c=='b' ? 2 : c=='o' ? 8 : c=='x' ? 16 : 10
+            if base != 10
+                c, i, j = parseint_next(s,i)
+            end
+        else
+            base = 10
+        end
+    end
+    return sgn, base, j
+end
 
-parse_bin(T::Type, s::String) = parse_int(T,s,2)
-parse_oct(T::Type, s::String) = parse_int(T,s,8)
-parse_hex(T::Type, s::String) = parse_int(T,s,16)
+function parseint_nocheck{T<:Integer}(::Type{T}, s::String, base::Int, a::Int)
+    sgn, base, i = parseint_preamble(T<:Signed,s,base)
+    c, i = parseint_next(s,i)
+    base = convert(T,base)
+    ## FIXME: remove 128-bit specific code once 128-bit div doesn't rely on BigInt
+    m::T = T===Uint128 || T===Int128 ? typemax(T) : div(typemax(T)-base+1,base)
+    n::T = 0
+    while n <= m
+        d::T = '0' <= c <= '9' ? c-'0'    :
+               'A' <= c <= 'Z' ? c-'A'+10 :
+               'a' <= c <= 'z' ? c-'a'+a  : base
+        d < base || error("invalid base $base digit $(repr(c)) in $(repr(s))")
+        n *= base
+        n += d
+        if done(s,i)
+            n *= sgn
+            return n
+        end
+        c, i = next(s,i)
+        isspace(c) && break
+    end
+    (T <: Signed) && (n *= sgn)
+    while !isspace(c)
+        d::T = '0' <= c <= '9' ? c-'0'    :
+               'A' <= c <= 'Z' ? c-'A'+10 :
+               'a' <= c <= 'z' ? c-'a'+a  : base
+        d < base || error("invalid base $base digit $(repr(c)) in $(repr(s))")
+        (T <: Signed) && (d *= sgn)
+        n = checked_mul(n,base)
+        n = checked_add(n,d)
+        done(s,i) && return n
+        c, i = next(s,i)
+    end
+    while !done(s,i)
+        c, i = next(s,i)
+        isspace(c) || error("extra characters after whitespace in $(repr(s))")
+    end
+    return n
+end
+parseint_nocheck{T<:Integer}(::Type{T}, s::String, base::Int) =
+    parseint_nocheck(T, s, base, base <= 36 ? 10 : 36)
 
-parse_bin(s::String) = parse_int(Int,s,2)
-parse_oct(s::String) = parse_int(Int,s,8)
-parse_hex(s::String) = parse_int(Int,s,16)
+parseint{T<:Integer}(::Type{T}, s::String, base::Integer) =
+    2 <= base <= 62 ? parseint_nocheck(T,s,int(base)) : error("invalid base: $base")
+parseint{T<:Integer}(::Type{T}, s::String) = parseint_nocheck(T,s,0)
+parseint(s::String, base::Integer) = parseint(Int,s,base)
+parseint(s::String) = parseint_nocheck(Int,s,0)
 
 integer (s::String) = int(s)
 unsigned(s::String) = uint(s)
-int     (s::String) = parse_int(Int,s)
-uint    (s::String) = parse_int(Uint,s)
-int8    (s::String) = parse_int(Int8,s)
-uint8   (s::String) = parse_int(Uint8,s)
-int16   (s::String) = parse_int(Int16,s)
-uint16  (s::String) = parse_int(Uint16,s)
-int32   (s::String) = parse_int(Int32,s)
-uint32  (s::String) = parse_int(Uint32,s)
-int64   (s::String) = parse_int(Int64,s)
-uint64  (s::String) = parse_int(Uint64,s)
-int128  (s::String) = parse_int(Int128,s)
-uint128 (s::String) = parse_int(Uint128,s)
+int     (s::String) = parseint(Int,s)
+uint    (s::String) = parseint(Uint,s)
+int8    (s::String) = parseint(Int8,s)
+uint8   (s::String) = parseint(Uint8,s)
+int16   (s::String) = parseint(Int16,s)
+uint16  (s::String) = parseint(Uint16,s)
+int32   (s::String) = parseint(Int32,s)
+uint32  (s::String) = parseint(Uint32,s)
+int64   (s::String) = parseint(Int64,s)
+uint64  (s::String) = parseint(Uint64,s)
+int128  (s::String) = parseint(Int128,s)
+uint128 (s::String) = parseint(Uint128,s)
 
 ## stringifying integers more efficiently ##
 
@@ -1189,6 +1554,11 @@ float64_isvalid(s::String, out::Array{Float64,1}) =
     ccall(:jl_strtod, Int32, (Ptr{Uint8},Ptr{Float64}), s, out) == 0
 float32_isvalid(s::String, out::Array{Float32,1}) =
     ccall(:jl_strtof, Int32, (Ptr{Uint8},Ptr{Float32}), s, out) == 0
+
+float64_isvalid(s::SubString, out::Array{Float64,1}) =
+    ccall(:jl_substrtod, Int32, (Ptr{Uint8},Csize_t,Int,Ptr{Float64}), s.string, convert(Csize_t,s.offset), s.endof, out) == 0
+float32_isvalid(s::SubString, out::Array{Float32,1}) =
+    ccall(:jl_substrtof, Int32, (Ptr{Uint8},Csize_t,Int,Ptr{Float32}), s.string, convert(Csize_t,s.offset), s.endof, out) == 0
 
 begin
     local tmp::Array{Float64,1} = Array(Float64,1)
@@ -1210,9 +1580,9 @@ begin
 end
 
 float(x::String) = float64(x)
-parse_float(x::String) = float64(x)
-parse_float(::Type{Float64}, x::String) = float64(x)
-parse_float(::Type{Float32}, x::String) = float32(x)
+parsefloat(x::String) = float64(x)
+parsefloat(::Type{Float64}, x::String) = float64(x)
+parsefloat(::Type{Float32}, x::String) = float32(x)
 
 for conv in (:float, :float32, :float64,
              :int, :int8, :int16, :int32, :int64,
@@ -1222,20 +1592,85 @@ end
 
 # find the index of the first occurrence of a value in a byte array
 
-function memchr(a::Array{Uint8,1}, b::Integer, i::Integer)
+typealias ByteArray Union(Array{Uint8,1},Array{Int8,1})
+
+function search(a::ByteArray, b::Union(Int8,Uint8), i::Integer)
     if i < 1 error(BoundsError) end
     n = length(a)
     if i > n return i == n+1 ? 0 : error(BoundsError) end
     p = pointer(a)
-    q = ccall(:memchr, Ptr{Uint8}, (Ptr{Uint8}, Int32, Uint), p+i-1, b, n-i+1)
+    q = ccall(:memchr, Ptr{Uint8}, (Ptr{Uint8}, Int32, Csize_t), p+i-1, b, n-i+1)
     q == C_NULL ? 0 : int(q-p+1)
 end
-memchr(a::Array{Uint8,1}, b::Integer) = memchr(a,b,1)
+function search(a::ByteArray, b::Char, i::Integer)
+    if isascii(b)
+        search(a,uint8(b),i)
+    else
+        search(a,string(b).data,i).start
+    end
+end
+search(a::ByteArray, b::Union(Int8,Uint8,Char)) = search(a,b,1)
+
+function rsearch(a::Union(Array{Uint8,1},Array{Int8,1}), b::Union(Int8,Uint8), i::Integer)
+    if i < 1 return i == 0 ? 0 : error(BoundsError) end
+    n = length(a)
+    if i > n return i == n+1 ? 0 : error(BoundsError) end
+    p = pointer(a)
+    q = ccall(:memrchr, Ptr{Uint8}, (Ptr{Uint8}, Int32, Csize_t), p, b, i)
+    q == C_NULL ? 0 : int(q-p+1)
+end
+function rsearch(a::ByteArray, b::Char, i::Integer)
+    if isascii(b)
+        rsearch(a,uint8(b),i)
+    else
+        rsearch(a,string(b).data,i).start
+    end
+end
+rsearch(a::ByteArray, b::Union(Int8,Uint8,Char)) = rsearch(a,b,length(a))
 
 # return a random string (often useful for temporary filenames/dirnames)
 let
-global randstring
-const randstring_chars = ASCIIString(uint8([0x30:0x39,0x41:0x5a,0x61:0x7a]))
-randstring(len::Int) =
-    randstring_chars[iceil(strlen(randstring_chars)*rand(len))]
+    global randstring
+    const b = uint8(['0':'9','A':'Z','a':'z'])
+    randstring(n::Int) = ASCIIString(b[rand(1:length(b),n)])
+    randstring() = randstring(8)
 end
+
+function hex2bytes(s::ASCIIString)
+    len = length(s)
+    iseven(len) || error("string length must be even: $(repr(s))")
+    arr = zeros(Uint8, div(len,2))
+    i = j = 0
+    while i < len
+        n = 0
+        c = s[i+=1]
+        n = '0' <= c <= '9' ? c - '0' :
+            'a' <= c <= 'f' ? c - 'a' + 10 :
+            'A' <= c <= 'F' ? c - 'A' + 10 :
+                error("not a hexadecimal string: $(repr(s))")
+        c = s[i+=1]
+        n = '0' <= c <= '9' ? n << 4 + c - '0' :
+            'a' <= c <= 'f' ? n << 4 + c - 'a' + 10 :
+            'A' <= c <= 'F' ? n << 4 + c - 'A' + 10 :
+                error("not a hexadecimal string: $(repr(s))")
+        arr[j+=1] = n
+    end
+    return arr
+end
+
+bytes2hex{T<:Uint8}(arr::Array{T,1}) = join([hex(i,2) for i in arr])
+
+function repr(x)
+    s = IOBuffer()
+    showall(s, x)
+    takebuf_string(s)
+end
+
+# pointer conversions of ASCII/UTF8/UTF16/UTF32 strings:
+pointer(x::Union(ByteString,UTF16String,UTF32String)) = pointer(x.data)
+pointer{T<:ByteString}(x::SubString{T}) = pointer(x.string.data) + x.offset
+pointer(x::ByteString, i::Integer) = pointer(x.data)+(i-1)
+pointer{T<:ByteString}(x::SubString{T}, i::Integer) = pointer(x.string.data) + x.offset + (i-1)
+pointer(x::Union(UTF16String,UTF32String), i::Integer) = pointer(x)+(i-1)*sizeof(eltype(x.data))
+pointer{T<:Union(UTF16String,UTF32String)}(x::SubString{T}) = pointer(x.string.data) + x.offset*sizeof(eltype(x.data))
+pointer{T<:Union(UTF16String,UTF32String)}(x::SubString{T}, i::Integer) = pointer(x.string.data) + (x.offset + (i-1))*sizeof(eltype(x.data))

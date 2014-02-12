@@ -1,7 +1,7 @@
 .. _man-control-flow:
 
 **************
- Control Flow  
+ Control Flow
 **************
 
 Julia provides a variety of control flow constructs:
@@ -34,7 +34,9 @@ several subexpressions in order, returning the value of the last
 subexpression as its value. There are two Julia constructs that
 accomplish this: ``begin`` blocks and ``(;)`` chains. The value of both
 compound expression constructs is that of the last subexpression. Here's
-an example of a ``begin`` block::
+an example of a ``begin`` block:
+
+.. doctest::
 
     julia> z = begin
              x = 1
@@ -45,7 +47,9 @@ an example of a ``begin`` block::
 
 Since these are fairly small, simple expressions, they could easily be
 placed onto a single line, which is where the ``(;)`` chain syntax comes
-in handy::
+in handy:
+
+.. doctest::
 
     julia> z = (x = 1; y = 2; x + y)
     3
@@ -53,7 +57,9 @@ in handy::
 This syntax is particularly useful with the terse single-line function
 definition form introduced in :ref:`man-functions`. Although it
 is typical, there is no requirement that ``begin`` blocks be multiline
-or that ``(;)`` chains be single-line::
+or that ``(;)`` chains be single-line:
+
+.. doctest::
 
     julia> begin x = 1; y = 2; x + y end
     3
@@ -80,11 +86,12 @@ anatomy of the ``if``-``elseif``-``else`` conditional syntax::
       println("x is equal to y")
     end
 
-The semantics are just what you'd expect: if the condition expression
-``x < y`` is ``true``, then the corresponding block is evaluated;
-otherwise the condition expression ``x > y`` is evaluated, and if it is
-``true``, the corresponding block is evaluated; if neither expression is
-true, the ``else`` block is evaluated. Here it is in action::
+If the condition expression ``x < y`` is ``true``, then the corresponding block
+is evaluated; otherwise the condition expression ``x > y`` is evaluated, and if
+it is ``true``, the corresponding block is evaluated; if neither expression is
+true, the ``else`` block is evaluated. Here it is in action:
+
+.. doctest::
 
     julia> function test(x, y)
              if x < y
@@ -95,6 +102,7 @@ true, the ``else`` block is evaluated. Here it is in action::
                println("x is equal to y")
              end
            end
+    test (generic function with 1 method)
 
     julia> test(1, 2)
     x is less than y
@@ -111,14 +119,16 @@ blocks as desired can be used. The condition expressions in the
 evaluates to ``true``, after which the associated block is evaluated,
 and no further condition expressions or blocks are evaluated.
 
-Unlike C, MATLAB®, Perl, Python, and Ruby — but like Java, and a few
+Unlike C, MATLAB, Perl, Python, and Ruby — but like Java, and a few
 other stricter, typed languages — it is an error if the value of a
-conditional expression is anything but ``true`` or ``false``::
+conditional expression is anything but ``true`` or ``false``:
+
+.. doctest::
 
     julia> if 1
              println("true")
            end
-    type error: lambda: in if, expected Bool, got Int64
+    ERROR: type: non-boolean (Int64) used in boolean context
 
 This error indicates that the conditional was of the wrong type:
 ``Int64`` rather than the required ``Bool``.
@@ -140,7 +150,9 @@ The easiest way to understand this behavior is to see an example. In the
 previous example, the ``println`` call is shared by all three branches:
 the only real choice is which literal string to print. This could be
 written more concisely using the ternary operator. For the sake of
-clarity, let's try a two-way version first::
+clarity, let's try a two-way version first:
+
+.. doctest::
 
     julia> x = 1; y = 2;
 
@@ -156,10 +168,13 @@ If the expression ``x < y`` is true, the entire ternary operator
 expression evaluates to the string ``"less than"`` and otherwise it
 evaluates to the string ``"not less than"``. The original three-way
 example requires chaining multiple uses of the ternary operator
-together::
+together:
+
+.. doctest::
 
     julia> test(x, y) = println(x < y ? "x is less than y"    :
                                 x > y ? "x is greater than y" : "x is equal to y")
+    test (generic function with 1 method)
 
     julia> test(1, 2)
     x is less than y
@@ -174,9 +189,13 @@ To facilitate chaining, the operator associates from right to left.
 
 It is significant that like ``if``-``elseif``-``else``, the expressions
 before and after the ``:`` are only evaluated if the condition
-expression evaluates to ``true`` or ``false``, respectively::
+expression evaluates to ``true`` or ``false``, respectively:
 
-    v(x) = (println(x); x)
+.. doctest::
+
+    julia> v(x) = (println(x); x)
+    v (generic function with 1 method)
+
 
     julia> 1 < 2 ? v("yes") : v("no")
     yes
@@ -207,11 +226,16 @@ The reasoning is that ``a && b`` must be ``false`` if ``a`` is
 ``false``, regardless of the value of ``b``, and likewise, the value of
 ``a || b`` must be true if ``a`` is ``true``, regardless of the value of
 ``b``. Both ``&&`` and ``||`` associate to the right, but ``&&`` has
-higher precedence than than ``||`` does. It's easy to experiment with
-this behavior::
+higher precedence than ``||`` does. It's easy to experiment with
+this behavior:
 
-    t(x) = (println(x); true)
-    f(x) = (println(x); false)
+.. doctest::
+
+    julia> t(x) = (println(x); true)
+    t (generic function with 1 method)
+
+    julia> f(x) = (println(x); false)
+    f (generic function with 1 method)
 
     julia> t(1) && t(2)
     1
@@ -252,11 +276,12 @@ this behavior::
 You can easily experiment in the same way with the associativity and
 precedence of various combinations of ``&&`` and ``||`` operators.
 
-If you want to perform boolean operations *without* short-circuit
-evaluation behavior, you can use the bitwise boolean operators
-introduced in :ref:`man-mathematical-operations`:
+Boolean operations *without* short-circuit evaluation can be done with the
+bitwise boolean operators introduced in :ref:`man-mathematical-operations`:
 ``&`` and ``|``. These are normal functions, which happen to support
-infix operator syntax, but always evaluate their arguments::
+infix operator syntax, but always evaluate their arguments:
+
+.. doctest::
 
     julia> f(1) & t(2)
     1
@@ -270,10 +295,12 @@ infix operator syntax, but always evaluate their arguments::
 
 Just like condition expressions used in ``if``, ``elseif`` or the
 ternary operator, the operands of ``&&`` or ``||`` must be boolean
-values (``true`` or ``false``). Using a non-boolean value is an error::
+values (``true`` or ``false``). Using a non-boolean value is an error:
+
+.. doctest::
 
     julia> 1 && 2
-    type error: lambda: in if, expected Bool, got Int64
+    ERROR: type: non-boolean (Int64) used in boolean context
 
 .. _man-loops:
 
@@ -282,7 +309,9 @@ Repeated Evaluation: Loops
 
 There are two constructs for repeated evaluation of expressions: the
 ``while`` loop and the ``for`` loop. Here is an example of a ``while``
-loop::
+loop:
+
+.. doctest::
 
     julia> i = 1;
 
@@ -303,7 +332,9 @@ of the ``while`` loop. If the condition expression is ``false`` when the
 
 The ``for`` loop makes common repeated evaluation idioms easier to
 write. Since counting up and down like the above ``while`` loop does is
-so common, it can be expressed more concisely with a ``for`` loop::
+so common, it can be expressed more concisely with a ``for`` loop:
+
+.. doctest::
 
     julia> for i = 1:5
              println(i)
@@ -322,7 +353,9 @@ loop form is the scope during which the variable is visible. If the
 variable ``i`` has not been introduced in an other scope, in the ``for``
 loop form, it is visible only inside of the ``for`` loop, and not
 afterwards. You'll either need a new interactive session instance or a
-different variable name to test this::
+different variable name to test this:
+
+.. doctest::
 
     julia> for j = 1:5
              println(j)
@@ -334,7 +367,7 @@ different variable name to test this::
     5
 
     julia> j
-    j not defined
+    ERROR: j not defined
 
 See :ref:`man-variables-and-scoping` for a detailed
 explanation of variable scope and how it works in Julia.
@@ -342,7 +375,9 @@ explanation of variable scope and how it works in Julia.
 In general, the ``for`` loop construct can iterate over any container.
 In these cases, the alternative (but fully equivalent) keyword ``in`` is
 typically used instead of ``=``, since it makes the code read more
-clearly::
+clearly:
+
+.. doctest::
 
     julia> for i in [1,4,0]
              println(i)
@@ -364,7 +399,9 @@ later sections of the manual (see, e.g., :ref:`man-arrays`).
 It is sometimes convenient to terminate the repetition of a ``while``
 before the test condition is falsified or stop iterating in a ``for``
 loop before the end of the iterable object is reached. This can be
-accomplished with the ``break`` keyword::
+accomplished with the ``break`` keyword:
+
+.. doctest::
 
     julia> i = 1;
 
@@ -399,7 +436,9 @@ by using the ``break`` keyword.
 
 In other circumstances, it is handy to be able to stop an iteration and
 move on to the next one immediately. The ``continue`` keyword
-accomplishes this::
+accomplishes this:
+
+.. doctest::
 
     julia> for i = 1:10
              if i % 3 != 0
@@ -418,7 +457,9 @@ more code to be evaluated after the ``continue``, and often there are
 multiple points from which one calls ``continue``.
 
 Multiple nested ``for`` loops can be combined into a single outer loop,
-forming the cartesian product of its iterables::
+forming the cartesian product of its iterables:
+
+.. doctest::
 
     julia> for i = 1:2, j = 3:4
              println((i, j))
@@ -440,37 +481,127 @@ diagnostic error message, or if the programmer has provided code to
 handle such exceptional circumstances, allow that code to take the
 appropriate action.
 
-The ``error`` function is used to indicate that an unexpected condition
-has occurred which should interrupt the normal flow of control. The
-built in ``sqrt`` function returns ``NaN`` if applied to a negative real
-value::
+Built-in ``Exception``\ s
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Exception``\ s are thrown when an unexpected condition has occurred. The
+built-in ``Exception``\ s listed below all interrupt the normal flow of control.
+
++------------------------+
+| ``Exception``          |
++========================+
+| ``ArgumentError``      |
++------------------------+
+| ``BoundsError``        |
++------------------------+
+| ``DivideError``        |
++------------------------+
+| ``DomainError``        |
++------------------------+
+| ``EOFError``           |
++------------------------+
+| ``ErrorException``     |
++------------------------+
+| ``InexactError``       |
++------------------------+
+| ``InterruptException`` |
++------------------------+
+| ``KeyError``           |
++------------------------+
+| ``LoadError``          |
++------------------------+
+| ``MemoryError``        |
++------------------------+
+| ``MethodError``        |
++------------------------+
+| ``OverflowError``      |
++------------------------+
+| ``ParseError``         |
++------------------------+
+| ``SystemError``        |
++------------------------+
+| ``TypeError``          |
++------------------------+
+| ``UndefRefError``      |
++------------------------+
+
+For example, the ``sqrt`` function throws a ``DomainError()`` if applied to a
+negative real value:
+
+.. doctest::
 
     julia> sqrt(-1)
-    NaN
+    ERROR: DomainError
+    sqrt will only return a complex result if called with a complex argument.
+    try sqrt(complex(x))
+     in sqrt at math.jl:284
+
+The ``throw`` function
+~~~~~~~~~~~~~~~~~~~~~~
+
+Exceptions can be created explicitly with ``throw``. For example, a function
+defined only for nonnegative numbers could be written to ``throw`` a ``DomainError``
+if the argument is negative. :
+
+.. doctest::
+
+    julia> f(x) = x>=0 ? exp(-x) : throw(DomainError())
+    f (generic function with 1 method)
+    
+    julia> f(1)
+    0.36787944117144233
+    
+    julia> f(-1)
+    ERROR: DomainError
+     in f at none:1
+
+Note that ``DomainError`` without parentheses is not an exception, but a type of
+exception. It needs to be called to obtain an ``Exception`` object :
+
+.. doctest::
+
+    julia> typeof(DomainError()) <: Exception
+    true
+    
+    julia> typeof(DomainError) <: Exception
+    false
+
+Errors
+~~~~~~
+
+The ``error`` function is used to produce an ``ErrorException`` that
+interrupts the normal flow of control.
 
 Suppose we want to stop execution immediately if the square root of a
 negative number is taken. To do this, we can define a fussy version of
-the ``sqrt`` function that raises an error if its argument is negative::
+the ``sqrt`` function that raises an error if its argument is negative:
 
-    fussy_sqrt(x) = x >= 0 ? sqrt(x) : error("negative x not allowed")
+.. doctest::
+
+    julia> fussy_sqrt(x) = x >= 0 ? sqrt(x) : error("negative x not allowed")
+    fussy_sqrt (generic function with 1 method)
 
     julia> fussy_sqrt(2)
     1.4142135623730951
 
     julia> fussy_sqrt(-1)
-    negative x not allowed
+    ERROR: negative x not allowed
+     in fussy_sqrt at none:1
 
 If ``fussy_sqrt`` is called with a negative value from another function,
 instead of trying to continue execution of the calling function, it
 returns immediately, displaying the error message in the interactive
-session::
+session:
 
-    function verbose_fussy_sqrt(x)
-      println("before fussy_sqrt")
-      r = fussy_sqrt(x)
-      println("after fussy_sqrt")
-      return r
-    end
+.. doctest::
+
+    julia> function verbose_fussy_sqrt(x)
+             println("before fussy_sqrt")
+             r = fussy_sqrt(x)
+             println("after fussy_sqrt")
+             return r
+           end
+    verbose_fussy_sqrt (generic function with 1 method)
 
     julia> verbose_fussy_sqrt(2)
     before fussy_sqrt
@@ -479,97 +610,124 @@ session::
 
     julia> verbose_fussy_sqrt(-1)
     before fussy_sqrt
-    negative x not allowed
+    ERROR: negative x not allowed
+     in fussy_sqrt at none:1
 
-Now suppose we want to handle this circumstance rather than just giving
-up with an error. To catch an error, you use the ``try`` and ``catch``
-keywords. Here is a rather contrived example that computes the square
-root of the absolute value of ``x`` by handling the error raised by
-``fussy_sqrt``::
+Warnings and informational messages
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    function sqrt_abs(x)
-      try
-        fussy_sqrt(x)
-      catch
-        fussy_sqrt(-x)
-      end
-    end
+Julia also provides other functions that write messages to the standard error
+I/O, but do not throw any ``Exception``\ s and hence do not interrupt
+execution.:
 
-    julia> sqrt_abs(2)
-    1.4142135623730951
+.. doctest::
 
-    julia> sqrt_abs(-2)
-    1.4142135623730951
+    julia> info("Hi"); 1+1
+    INFO: Hi
+    2
+    
+    julia> warn("Hi"); 1+1
+    WARNING: Hi
+    2
+    
+    julia> error("Hi"); 1+1
+    ERROR: Hi
+     in error at error.jl:21
 
-Of course, it would be far simpler and more efficient to just return
-``sqrt(abs(x))``. However, this demonstrates how ``try`` and ``catch``
-operate: the ``try`` block is executed initially, and the value of the
-entire construct is the value of the last expression if no exceptions
-are thrown during execution; if an exception is thrown during the
-evaluation of the ``try`` block, however, execution of the ``try`` code
-ceases immediately and the ``catch`` block is evaluated instead. If the
-``catch`` block succeeds without incident (it can in turn raise an
-exception, which would unwind the call stack further), the value of the
-entire ``try``-``catch`` construct is that of the last expression in the
-``catch`` block.
 
-Throw versus Error
-~~~~~~~~~~~~~~~~~~
+The ``try/catch`` statement
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The ``error`` function is convenient for indicating that an error has
-occurred, but it is built on a more fundamental function: ``throw``.
-Perhaps ``throw`` should be introduced first, but typical usage calls
-for ``error``, so we have deferred the introduction of ``throw``. Above,
-we use a form of the ``try``-``catch`` expression in which no value is
-captured by the ``catch`` block, but there is another form::
+The ``try/catch`` statement allows for ``Exception``\ s to be tested for. For
+example, a customized square root function can be written to automatically
+call either the real or complex square root method on demand using
+``Exception``\ s :
 
+.. doctest::
+
+    julia> f(x) = try
+             sqrt(x)
+           catch
+             sqrt(complex(x, 0))
+           end
+    f (generic function with 1 method)
+    
+    julia> f(1)
+    1.0
+    
+    julia> f(-1)
+    0.0 + 1.0im
+
+It is important to note that in real code computing this function, one would
+compare ``x`` to zero instead of catching an exception. The exception is much
+slower than simply comparing and branching.
+
+``try/catch`` statements also allow the ``Exception`` to be saved in a
+variable. In this contrived example, the following example calculates the
+square root of the second element of ``x`` if ``x`` is indexable, otherwise
+assumes ``x`` is a real number and returns its square root:
+
+.. doctest::
+
+    julia> sqrt_second(x) = try
+             sqrt(x[2])
+           catch y
+             if isa(y, DomainError)
+               sqrt(complex(x[2], 0))
+             elseif isa(y, BoundsError)
+               sqrt(x)
+             end
+           end
+    sqrt_second (generic function with 1 method)
+    
+    julia> sqrt_second([1 4])
+    2.0
+    
+    julia> sqrt_second([1 -4])
+    0.0 + 2.0im
+    
+    julia> sqrt_second(9)
+    3.0
+    
+    julia> sqrt_second(-9)
+    ERROR: DomainError
+    sqrt will only return a complex result if called with a complex argument.
+    try sqrt(complex(x))
+     in sqrt at math.jl:284
+     in sqrt_second at none:7
+
+The power of the ``try/catch`` construct lies in the ability to unwind a deeply
+nested computation immediately to a much higher level in the stack of calling
+functions. There are situations where no error has occurred, but the ability to
+unwind the stack and pass a value to a higher level is desirable. Julia
+provides the ``rethrow``, ``backtrace`` and ``catch_backtrace`` functions for
+more advanced error handling.
+
+finally Clauses
+~~~~~~~~~~~~~~~
+
+In code that performs state changes or uses resources like files, there is
+typically clean-up work (such as closing files) that needs to be done when the
+code is finished. Exceptions potentially complicate this task, since they can
+cause a block of code to exit before reaching its normal end. The ``finally``
+keyword provides a way to run some code when a given block of code exits,
+regardless of how it exits.
+
+For example, here is how we can guarantee that an opened file is closed::
+
+    f = open("file")
     try
-      # execute some code
-    catch x
-      # do something with x
+        # operate on file f
+    finally
+        close(f)
     end
 
-In this form, if the built-in ``throw`` function is called by the
-"execute some code" expression, or any callee thereof, the catch block
-is executed with the argument of the ``throw`` function bound to the
-variable ``x``. The ``error`` function is simply a convenience which
-always throws an instance of the type ``ErrorException``. Here we can
-see that the object thrown when a divide-by-zero error occurs is of type
-``DivideByZeroError``::
-
-    julia> div(1,0)
-    error: integer divide by zero
-
-    julia> try
-             div(1,0)
-           catch x
-             println(typeof(x))
-           end
-    DivideByZeroError
-
-``DivideByZeroError`` is a concrete subtype of ``Exception``, thrown to
-indicate that an integer division by zero has occurred. Floating-point
-functions, on the other hand, can simply return ``NaN`` rather than
-throwing an exception.
-
-Unlike ``error``, which should only be used to indicate an unexpected
-condition, ``throw`` is merely a control construct, and can be used to
-pass any value back to an enclosing ``try``-``catch``::
-
-    julia> try
-             throw("Hello, world.")
-           catch x
-             println(x)
-           end
-    Hello, world.
-
-This example is contrived, of course — the power of the
-``try``-``catch`` construct lies in the ability to unwind a deeply
-nested computation immediately to a much higher level in the stack of
-calling functions. There are situations where no error has occurred, but
-the ability to unwind the stack and pass a value to a higher level is
-desirable. These are the circumstances in which ``throw`` should be used
-rather than ``error``.
+When control leaves the ``try`` block (for example due to a ``return``, or
+just finishing normally), ``close(f)`` will be executed. If
+the ``try`` block exits due to an exception, the exception will continue
+propagating. A ``catch`` block may be combined with ``try`` and ``finally``
+as well. In this case the ``finally`` block will run after ``catch`` has
+handled the error.
 
 .. _man-tasks:
 
@@ -588,7 +746,7 @@ resumed, at which point it will pick up right where it left off. At
 first, this may seem similar to a function call. However there are two
 key differences. First, switching tasks does not use any space, so any
 number of task switches can occur without consuming the call stack.
-Second, you may switch among tasks in any order, unlike function calls,
+Second, switching among tasks can occur in any order, unlike function calls,
 where the called function must finish executing before control returns
 to the calling function.
 
@@ -605,18 +763,22 @@ they need to, passing values back and forth as necessary.
 
 Julia provides the functions ``produce`` and ``consume`` for solving
 this problem. A producer is a function that calls ``produce`` on each
-value it needs to produce::
+value it needs to produce:
 
-    function producer()
-      produce("start")
-      for n=1:4
-        produce(2n)
-      end
-      produce("stop")
-    end
+.. doctest::
+
+    julia> function producer()
+             produce("start")
+             for n=1:4
+               produce(2n)
+             end
+             produce("stop")
+           end;
 
 To consume values, first the producer is wrapped in a ``Task``, then
-``consume`` is called repeatedly on that object::
+``consume`` is called repeatedly on that object:
+
+.. doctest::
 
     julia> p = Task(producer)
     Task
@@ -644,7 +806,9 @@ return multiple times. Between calls to ``produce``, the producer's
 execution is suspended and the consumer has control.
 
 A Task can be used as an iterable object in a ``for`` loop, in which
-case the loop variable takes on all the produced values::
+case the loop variable takes on all the produced values:
+
+.. doctest::
 
     julia> for x in Task(producer)
              println(x)
@@ -670,6 +834,79 @@ directly or by use of a convenience macro::
     # or, equivalently
     taskHdl = @task mytask(7)
 
-``produce`` and ``consume`` are intended for multitasking, and do not
-launch threads that can run on separate CPUs. True kernel threads are
-discussed under the topic of :ref:`man-parallel-computing`.
+``produce`` and ``consume`` do not launch threads that can run on separate CPUs.
+True kernel threads are discussed under the topic of :ref:`man-parallel-computing`.
+
+Core task operations
+~~~~~~~~~~~~~~~~~~~~
+
+While ``produce`` and ``consume`` illustrate the essential nature of tasks, they
+are actually implemented as library functions using a more primitive function,
+``yieldto``. ``yieldto(task,value)`` suspends the current task, switches
+to the specified ``task``, and causes that task's last ``yieldto`` call to return
+the specified ``value``. Notice that ``yieldto`` is the only operation required
+to use task-style control flow; instead of calling and returning we are always
+just switching to a different task. This is why this feature is also called
+"symmetric coroutines"; each task is switched to and from using the same mechanism.
+
+``yieldto`` is powerful, but most uses of tasks do not invoke it directly.
+Consider why this might be. If you switch away from the current task, you will
+probably want to switch back to it at some point, but knowing when to switch
+back, and knowing which task has the responsibility of switching back, can
+require considerable coordination. For example, ``produce`` needs to maintain
+some state to remember who the consumer is. Not needing to manually keep track
+of the consuming task is what makes ``produce`` easier to use than ``yieldto``.
+
+In addition to ``yieldto``, a few other basic functions are needed to use tasks
+effectively.
+``current_task()`` gets a reference to the currently-running task.
+``istaskdone(t)`` queries whether a task has exited.
+``istaskstarted(t)`` queries whether a task has run yet.
+``task_local_storage`` manipulates a key-value store specific to the current task.
+
+Tasks and events
+~~~~~~~~~~~~~~~~
+
+Most task switches occur as a result of waiting for events such as I/O
+requests, and are performed by a scheduler included in the standard library.
+The scheduler maintains a queue of runnable tasks, and executes an event loop
+that restarts tasks based on external events such as message arrival.
+
+The basic function for waiting for an event is ``wait``. Several objects
+implement ``wait``; for example, given a ``Process`` object, ``wait`` will
+wait for it to exit. ``wait`` is often implicit; for example, a ``wait``
+can happen inside a call to ``read`` to wait for data to be available.
+
+In all of these cases, ``wait`` ultimately operates on a ``Condition``
+object, which is in charge of queueing and restarting tasks. When a task
+calls ``wait`` on a ``Condition``, the task is marked as non-runnable, added
+to the condition's queue, and switches to the scheduler. The scheduler will
+then pick another task to run, or block waiting for external events.
+If all goes well, eventually an event handler will call ``notify`` on the
+condition, which causes tasks waiting for that condition to become runnable
+again.
+
+A task created explicitly by calling ``Task`` is initially not known to the
+scheduler. This allows you to manage tasks manually using ``yieldto`` if
+you wish. However, when such a task waits for an event, it still gets restarted
+automatically when the event happens, as you would expect. It is also
+possible to make the scheduler run a task whenever it can, without necessarily
+waiting for any events. This is done by calling ``schedule(task)``, or using
+the ``@schedule`` or ``@async`` macros (see :ref:`man-parallel-computing` for
+more details).
+
+Task states
+~~~~~~~~~~~
+
+Tasks have a ``state`` field that describes their execution status. A task
+state is one of the following symbols:
+
+=============  ==================================================
+Symbol         Meaning
+=============  ==================================================
+``:runnable``  Currently running, or available to be switched to
+``:waiting``   Blocked waiting for a specific event
+``:queued``    In the scheduler's run queue about to be restarted
+``:done``      Successfully finished executing
+``:failed``    Finished with an uncaught exception
+=============  ==================================================

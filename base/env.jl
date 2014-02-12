@@ -1,67 +1,98 @@
 ## core libc calls ##
 
-hasenv(s::String) = ccall(:getenv, Ptr{Uint8}, (Ptr{Uint8},), s) != C_NULL
-
-function getenv(var::String)
-    val = ccall(:getenv, Ptr{Uint8}, (Ptr{Uint8},), var)
-    if val == C_NULL
-        error("getenv: undefined variable: ", var)
-    end
-    bytestring(val)
-end
-
-function setenv(var::String, val::String, overwrite::Bool)
 @unix_only begin
-    ret = ccall(:setenv, Int32, (Ptr{Uint8},Ptr{Uint8},Int32), var, val, overwrite)
-    system_error(:setenv, ret != 0)
+    _getenv(var::String) = ccall(:getenv, Ptr{Uint8}, (Ptr{Uint8},), var)
+    _hasenv(s::String) = _getenv(s) != C_NULL
 end
 @windows_only begin
-    ret = ccall(:SetEnvironmentVariableA,stdcall,Int32,(Ptr{Uint8},Ptr{Uint8}),var,val)
-    system_error(:setenv, ret == 0)
+_getenvlen(var::String) = ccall(:GetEnvironmentVariableA,stdcall,Uint32,(Ptr{Uint8},Ptr{Uint8},Uint32),var,C_NULL,0)
+_hasenv(s::String) = _getenvlen(s)!=0
+function _jl_win_getenv(s::String,len::Uint32)
+    val=zeros(Uint8,len-1)
+    ret=ccall(:GetEnvironmentVariableA,stdcall,Uint32,(Ptr{Uint8},Ptr{Uint8},Uint32),s,val,len)
+    if ret==0||ret!=len-1 #Trailing 0 is only included on first call to GetEnvA
+        error("unknown system error: ", s, len, ret)
+    end
+    val
 end
 end
 
-setenv(var::String, val::String) = setenv(var, val, true)
 
-function unsetenv(var::String)
+macro accessEnv(var,errorcase)
+@unix_only return quote
+     val=_getenv($(esc(var)))
+     if val == C_NULL
+        $(esc(errorcase))
+     end
+     bytestring(val)
+end
+@windows_only return quote
+    len=_getenvlen($(esc(var)))
+    if len == 0
+        $(esc(errorcase))
+    end
+    bytestring(_jl_win_getenv($(esc(var)),len))
+end
+end
+
+function _setenv(var::String, val::String, overwrite::Bool)
+@unix_only begin
+    ret = ccall(:setenv, Int32, (Ptr{Uint8},Ptr{Uint8},Int32), var, val, overwrite)
+    systemerror(:setenv, ret != 0)
+end
+@windows_only begin
+    if overwrite||!_hasenv(var)
+        ret = ccall(:SetEnvironmentVariableA,stdcall,Int32,(Ptr{Uint8},Ptr{Uint8}),var,val)
+        systemerror(:setenv, ret == 0)
+    end
+end
+end
+
+_setenv(var::String, val::String) = _setenv(var, val, true)
+
+function _unsetenv(var::String)
 @unix_only begin
     ret = ccall(:unsetenv, Int32, (Ptr{Uint8},), var)
-    system_error(:unsetenv, ret != 0)
+    systemerror(:unsetenv, ret != 0)
 end
 @windows_only begin
     ret = ccall(:SetEnvironmentVariableA,stdcall,Int32,(Ptr{Uint8},Ptr{Uint8}),var,C_NULL)
-    system_error(:setenv, ret == 0)
+    systemerror(:setenv, ret == 0)
 end
 end
 
 ## ENV: hash interface ##
 
-type EnvHash <: Associative{ByteString,ByteString}; end
-
+@unix_only type EnvHash <: Associative{ByteString,ByteString}; end
+@windows_only type EnvHash <: Associative{ByteString,ByteString}
+    block::Ptr{Uint8}
+    EnvHash() = new(C_NULL)
+end
 const ENV = EnvHash()
 
-function ref(::EnvHash, k::String)
-    val = ccall(:getenv, Ptr{Uint8}, (Ptr{Uint8},), k)
-    if val == C_NULL
-        throw(KeyError(k))
-    end
-    bytestring(val)
+similar(::EnvHash) = Dict{ByteString,ByteString}()
+
+getindex(::EnvHash, k::String) = @accessEnv k throw(KeyError(k))
+get(::EnvHash, k::String, def) = @accessEnv k (return def)
+in(k::String, ::KeyIterator{EnvHash}) = _hasenv(k)
+pop!(::EnvHash, k::String) = (v = ENV[k]; _unsetenv(k); v)
+pop!(::EnvHash, k::String, def) = haskey(ENV,k) ? pop!(ENV,k) : def
+function delete!(::EnvHash, k::String)
+    warn_once("""
+        delete!(ENV,key) now returns the modified environment.
+        Use pop!(ENV,key) to retrieve the value instead.
+        """)
+    _unsetenv(k)
+    ENV
 end
+delete!(::EnvHash, k::String, def) = haskey(ENV,k) ? delete!(ENV,k) : def
+setindex!(::EnvHash, v, k::String) = _setenv(k,string(v))
+push!(::EnvHash, k::String, v) = setindex!(ENV, v, k)
 
-function get(::EnvHash, k::String, deflt)
-    val = ccall(:getenv, Ptr{Uint8}, (Ptr{Uint8},), k)
-    if val == C_NULL
-        return deflt
-    end
-    bytestring(val)
-end
-
-has(::EnvHash, k::String) = hasenv(k)
-del(::EnvHash, k::String) = unsetenv(k)
-assign(::EnvHash, v::String, k::String) = (setenv(k,v); v)
-
+@unix_only begin
 start(::EnvHash) = 0
 done(::EnvHash, i) = (ccall(:jl_environ, Any, (Int32,), i) == nothing)
+
 function next(::EnvHash, i)
     env = ccall(:jl_environ, Any, (Int32,), i)
     if env == nothing
@@ -72,8 +103,32 @@ function next(::EnvHash, i)
     if m == nothing
         error("malformed environment entry: $env")
     end
-    (m.captures, i+1)
+    (ByteString[convert(typeof(env),x) for x in m.captures], i+1)
 end
+end
+
+@windows_only begin
+start(hash::EnvHash) = (hash.block = ccall(:GetEnvironmentStringsA,stdcall,Ptr{Uint8},()))
+function done(hash::EnvHash, pos::Ptr{Uint8})
+    if ccall(:jl_env_done,Any,(Ptr{Uint8},),pos)::Bool
+        ccall(:FreeEnvironmentStringsA,stdcall,Int32,(Ptr{Uint8},),hash.block)
+        hash.block=C_NULL
+        return true
+    end
+    false
+end
+function next(hash::EnvHash, pos::Ptr{Uint8})
+    len = ccall(:strlen, Uint, (Ptr{Uint8},), pos)
+    env=ccall(:jl_pchar_to_string, Any, (Ptr{Uint8},Int), pos, len)::ByteString
+    m = match(r"^(.*?)=(.*)$"s, env)
+    if m == nothing
+        error("malformed environment entry: $env")
+    end
+    (ByteString[convert(typeof(env),x) for x in m.captures], i+1)
+end
+end
+
+#TODO: Make these more efficent
 function length(::EnvHash)
     i = 0
     for (k,v) in ENV
@@ -82,13 +137,25 @@ function length(::EnvHash)
     return i
 end
 
-function show(io, ::EnvHash)
+function show(io::IO, ::EnvHash)
     for (k,v) = ENV
         println(io, "$k=$v")
     end
 end
 
+# temporarily set and then restore an environment value
+function with_env(f::Function, key::String, val)
+    old = get(ENV,key,nothing)
+    val != nothing ? (ENV[key]=val) : _unsetenv(key)
+    try f()
+    finally
+        old != nothing ? (ENV[key]=old) : _unsetenv(key)
+    catch
+        rethrow()
+    end
+end
+
 ## misc environment-related functionality ##
 
-tty_cols() = parse_int(Int32, get(ENV,"COLUMNS","80"), 10)
-tty_rows() = parse_int(Int32, get(ENV,"LINES","25"), 10)
+tty_cols() = parseint(Int32, get(ENV,"COLUMNS","80"), 10)
+tty_rows() = parseint(Int32, get(ENV,"LINES","25"), 10)

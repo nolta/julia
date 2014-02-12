@@ -5,14 +5,12 @@
  The Julia Manual
 ##################
 
-:Release: |version|
-:Date: |today|
-
 .. toctree::
    :maxdepth: 1
 
    introduction
    getting-started
+   variables
    integers-and-floating-point-numbers
    mathematical-operations
    complex-and-rational-numbers
@@ -24,12 +22,17 @@
    methods
    constructors
    conversion-and-promotion
-   arrays
    modules
-   running-external-programs
    metaprogramming
+   arrays
+   linear-algebra
+   networking-and-streams
    parallel-computing
+   running-external-programs
    calling-c-and-fortran-code
+   embedding
+   packages
    performance-tips
-   potential-features
-
+   style-guide
+   faq
+   noteworthy-differences

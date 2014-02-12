@@ -4,11 +4,13 @@
  Getting Started  
 *****************
 
-The latest version of Julia can be downloaded and installed by following
-the instructions on the `main GitHub
-page <https://github.com/JuliaLang/julia#readme>`_. The easiest way to
-learn and experiment with Julia is by starting an interactive session
-(also known as a read-eval-print loop or "repl")::
+Julia installation is straightforward, whether using precompiled
+binaries or compiling from source. Download and install Julia by
+following the instructions at
+`http://julialang.org/downloads/ <http://julialang.org/downloads/>`_.
+
+The easiest way to learn and experiment with Julia is by starting an
+interactive session (also known as a read-eval-print loop or "repl")::
 
     $ julia
                    _
@@ -26,17 +28,19 @@ learn and experiment with Julia is by starting an interactive session
     julia> ans
     3
 
-    julia> load("file.jl")
+To exit the interactive session, type ``^D`` — the control key
+together with the ``d`` key or type ``quit()``. When run in interactive
+mode, ``julia`` displays a banner and prompts the user for input. Once
+the user has entered a complete expression, such as ``1 + 2``, and
+hits enter, the interactive session evaluates the expression and shows
+its value. If an expression is entered into an interactive session
+with a trailing semicolon, its value is not shown. The variable
+``ans`` is bound to the value of the last evaluated expression whether
+it is shown or not. The ``ans`` variable is only bound in interactive
+sessions, not when Julia code is run in other ways.
 
-To exit the interactive session, type ``^D`` — the control key together
-with the ``d`` key. When run in interactive mode, ``julia`` displays a
-banner and prompts the user for input. Once the user has entered a
-complete expression, such as ``1 + 2``, and hits enter, the interactive
-session evaluates the expression and shows its value. If an expression
-is entered into an interactive session with a trailing semicolon, its
-value is not shown. The variable ``ans`` is bound to the value of the
-last evaluated expression whether it is shown or not. The ``load``
-function reads and evaluates the contents of the given file.
+To evaluate expressions written in a source file ``file.jl``, write
+``include("file.jl")``.
 
 To run code in a file non-interactively, you can give it as the first
 argument to the julia command::
@@ -61,6 +65,34 @@ Or you could put that code into a script and run it::
     foo
     bar
 
+Julia can be started in parallel mode with either the ``-p`` or the 
+``--machinefile`` options. ``-p n`` will launch an additional ``n`` 
+worker processes, while ``--machinefile file`` will launch a worker 
+for each line in file ``file``. The machines defined in ``file`` must be 
+accessible via a passwordless ``ssh`` login, with Julia installed at the
+same location as the current host. Each machine definition takes the form 
+``[user@]host[:port]`` 
+    
+    
+If you have code that you want executed whenever julia is run, you can
+put it in ``~\.juliarc.jl``:
+
+.. raw:: latex
+
+    \begin{CJK*}{UTF8}{mj}
+
+::
+
+    $ echo 'println("Greetings! 你好! 안녕하세요?")' > ~/.juliarc.jl
+    $ julia
+    Greetings! 你好! 안녕하세요?
+    
+    ...
+
+.. raw:: latex
+
+    \end{CJK*}
+
 There are various ways to run Julia code and provide options, similar to
 those available for the ``perl`` and ``ruby`` programs::
 
@@ -70,65 +102,32 @@ those available for the ``perl`` and ``ruby`` programs::
      -H --home=<dir>          Load files relative to <dir>
      -T --tab=<size>          Set REPL tab width to <size>
 
-     -e --eval=<expr>         Evaluate <expr> and don't print
-     -E --print=<expr>        Evaluate and print <expr>
+     -e --eval=<expr>         Evaluate <expr>
+     -E --print=<expr>        Evaluate and show <expr>
      -P --post-boot=<expr>    Evaluate <expr> right after boot
-     -L --load=file           Load <file> right after boot
+     -L --load=file           Load <file> right after boot on all processors
      -J --sysimage=file       Start up with the given system image file
 
      -p n                     Run n local processes
+     --machinefile file       Run processes on hosts listed in file
+
+     --no-history             Don't load or save history
+     -f --no-startup          Don't load ~/.juliarc.jl
+     -F                       Load ~/.juliarc.jl, then handle remaining inputs
+     --color=yes|no           Enable or disable color text
 
      -h --help                Print this message
 
-Example Code
-------------
+Resources
+---------
 
-At this point it is useful to take a look at some :ref:`man-example-programs`.
+In addition to this manual, there are various other resources that may
+help new users get started with julia:
 
-Major Differences From MATLAB®
-------------------------------
-
-Julia's syntax is intended to be familiar to users of MATLAB®. However,
-Julia is in no way a MATLAB® clone: there are major syntactic and
-functional differences. The following are the most significant
-differences that may trip up Julia users accustomed to MATLAB®:
-
--  Arrays are indexed with square brackets, ``A[i,j]``.
--  Multiple values are returned and assigned with parentheses,
-   ``return (a, b)`` and ``(a, b) = f(x)``.
--  Values are passed and assigned by reference. If a function modifies
-   an array, the changes will be visible in the caller.
--  Use n for nx1: The number of arguments to an array constructor equals
-   the number of dimensions of the result. In particular, ``rand(n)``
-   makes a 1-dimensional array.
--  Concatenating scalars and arrays with the syntax ``[x,y,z]``
-   concatenates in the first dimension ("vertically"). For the second
-   dimension ("horizontally"), use spaces as in ``[x y z]``. To
-   construct block matrices (concatenating in the first two dimensions),
-   the syntax ``[a b; c d]`` is used to avoid confusion.
--  Colons ``a:b`` and ``a:b:c`` construct ``Range`` objects. To
-   construct a full vector, use ``linspace``, or "concatenate" the range
-   by enclosing it in brackets, ``[a:b]``.
--  Functions return values using the ``return`` keyword, instead of by
-   listing their names in the function definition (see
-   :ref:`man-return-keyword` for details).
--  A file may contain any number of functions, and all definitions will
-   be externally visible when the file is loaded.
--  Reductions such as ``sum``, ``prod``, and ``max`` are performed over
-   every element of an array when called with a single argument as in
-   ``sum(A)``.
--  Functions such as ``sort`` that operate column-wise by default
-   (``sort(A)`` is equivalent to ``sort(A,1)``) do not have special
-   behavior for 1xN arrays; the argument is returned unmodified since it
-   still performs ``sort(A,1)``. To sort a 1xN matrix like a vector, use
-   ``sort(A,2)``.
--  Parentheses must be used to call a function with zero arguments, as
-   in ``tic()`` and ``toc()``.
--  Do not use semicolons to end statements. The results of statements are
-   not automatically printed (except at the interactive prompt), and
-   lines of code do not need to end with semicolons. The function
-   ``println`` can be used to print a value followed by a newline.
--  If ``A`` and ``B`` are arrays, ``A == B`` doesn't return an array of
-   booleans. Use ``A .== B`` instead. Likewise for the other boolean
-   operators, ``<``, ``>``, ``!=``, etc.
+- `Julia and IJulia cheatsheet <http://math.mit.edu/%7Estevenj/Julia-cheatsheet.pdf>`_
+- `Learn Julia in a few minutes <http://learnxinyminutes.com/docs/julia/>`_
+- `Tutorial for Homer Reid's numerical analysis class <http://homerreid.dyndns.org/teaching/18.330/JuliaProgramming.shtml>`_
+- `An introductory presentation <https://github.com/ViralBShah/julia-presentations/raw/master/Fifth-Elephant-2013/Fifth-Elephant-2013.pdf>`_
+- `Videos from the Julia tutorial at MIT <http://julialang.org/blog/2013/03/julia-tutorial-MIT/>`_
+- `Forio Julia Tutorials <http://forio.com/julia/tutorials-list>`_
 

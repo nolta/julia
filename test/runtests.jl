@@ -1,51 +1,37 @@
-function runtests(name)
-    println("     \033[1m*\033[0m \033[31m$(name)\033[0m")
-    flush(OUTPUT_STREAM)
-    load("$name.jl")
+# linalg tests take the longest - start them off first
+testnames = [
+    "linalg1", "linalg2", "core", "keywordargs", "numbers", "strings",
+    "collections", "hashing", "remote", "iobuffer", "arrayops", 
+    "blas", "fft", "dsp", "sparse", "bitarray", "random", "math",
+    "functional", "bigint", "sorting", "statistics", "spawn", 
+    "priorityqueue", "arpack", "file", "suitesparse", "version",
+    "resolve", "pollfd", "mpfr", "broadcast", "complex", "socket",
+    "floatapprox", "readdlm", "regex", "float16", "combinatorics",
+    "sysinfo", "rounding", "ranges", "mod2pi", "euler", "show"
+]
+@unix_only push!(testnames, "unicode")
+
+# parallel tests depend on other workers - do them last
+push!(testnames, "parallel")
+
+tests = ARGS==["all"] ? testnames : ARGS
+
+if "linalg" in tests
+    # specifically selected case
+    filter!(x -> x != "linalg", tests)
+    prepend!(tests, ["linalg1", "linalg2"])
 end
 
-function check_approx_eq(va, vb, astr, bstr)
-    diff = abs(va - vb)
-    sdiff = strcat("|", astr, " - ", bstr, "| < 1e-6")
-    if diff < 1e-6
-        nothing
-    else
-        error("assertion failed: ", sdiff, "\n  ", astr, " = ", va, "\n  ",
-              bstr, " = ", vb)
-    end
-end
 
-macro assert_approx_eq(a, b)
-    quote
-        check_approx_eq($(esc(a)), $(esc(b)), $(string(a)), $(string(b)))
-    end
-end
+n = min(8, CPU_CORES, length(tests))
 
-macro timeit(ex,name)
-    quote
-        t = Inf
-        for i=1:5
-            t = min(t, @elapsed $(esc(ex)))
-        end
-        println(rpad(strcat($name,":"), 20), t)
-    end
-end
+n > 1 && addprocs(n)
 
-macro assert_fails(expr)
-    quote
-        ok = false
-        try
-            $(esc(expr))
-        catch
-            ok = true
-        end
-        if !ok
-            error(strcat("assertion failed: expected ",$(string(expr))," to fail"))
-        end
-    end
-end
+blas_set_num_threads(1)
 
-for t in ARGS
-    runtests(t)
-    println("    \033[32;1mSUCCESS\033[0m")
-end
+@everywhere include("testdefs.jl")
+
+reduce(propagate_errors, nothing, pmap(runtests, tests; err_retry=false, err_stop=true))
+
+@unix_only n > 1 && rmprocs(workers(), waitfor=5.0)
+println("    \033[32;1mSUCCESS\033[0m")

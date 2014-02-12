@@ -5,32 +5,33 @@
 
 MIRROR_HOST=http://d304tytmzqn1fl.cloudfront.net
 
-WGET=/usr/bin/wget
-CURL=/usr/bin/curl
-FETCH=/usr/bin/fetch
+WGET=$(which wget)
+CURL=$(which curl)
+FETCH=$(which fetch)
 
-WGET_OPTS=--no-check-certificate
-CURL_OPTS=-fkL
-FETCH_OPTS=
+TIMEOUT=15 # seconds
+WGET_OPTS="--no-check-certificate --tries=1 --timeout=$TIMEOUT"
+CURL_OPTS="-fkL --connect-timeout $TIMEOUT -y $TIMEOUT"
+FETCH_OPTS="-T $TIMEOUT"
 
 if [ $# -eq 1 ]; then
     CURL_OPTS="$CURL_OPTS -O"
     URL=$1
-    URL_BASENAME=`basename $1`
-    MIRROR_URL="$MIRROR_HOST/$URL_BASENAME"
 elif [ $# -eq 2 ]; then
     WGET_OPTS="$WGET_OPTS -O $1"
     CURL_OPTS="$CURL_OPTS -o $1"
     FETCH_OPTS="$FETCH_OPTS -o $1"
     URL=$2
-    MIRROR_URL="$MIRROR_HOST/$1"
 else
     exit 1
 fi
 
-if [ -x $CURL ]; then
+MIRROR_BASENAME=`basename $1`
+MIRROR_URL="$MIRROR_HOST/$MIRROR_BASENAME"
+
+if [ -x $CURL ] && $CURL -V >/dev/null; then
     GETURL="$CURL $CURL_OPTS"
-elif [ -x $WGET ]; then
+elif [ -x $WGET ] && $WGET -V >/dev/null; then
     GETURL="$WGET $WGET_OPTS"
 elif [ -x $FETCH ]; then
     GETURL="$FETCH $FETCH_OPTS"

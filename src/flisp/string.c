@@ -11,9 +11,12 @@
 #include <wchar.h>
 #include <wctype.h>
 #include <sys/types.h>
-#include <sys/time.h>
 #include <errno.h>
+
 #include "flisp.h"
+#if !defined(_OS_WINDOWS_)
+#include <sys/time.h>
+#endif /* !_OS_WINDOWS_ */
 
 value_t fl_stringp(value_t *args, u_int32_t nargs)
 {
@@ -31,22 +34,26 @@ value_t fl_string_count(value_t *args, u_int32_t nargs)
     size_t len = cv_len((cvalue_t*)ptr(args[0]));
     size_t stop = len;
     if (nargs > 1) {
-        start = toulong(args[1], "string.count");
+        start = tosize(args[1], "string.count");
         if (start > len)
             bounds_error("string.count", args[0], args[1]);
         if (nargs > 2) {
-            stop = toulong(args[2], "string.count");
+            stop = tosize(args[2], "string.count");
             if (stop > len)
                 bounds_error("string.count", args[0], args[2]);
             if (stop <= start)
                 return fixnum(0);
         }
     }
-    char *str = cvalue_data(args[0]);
+    char *str = (char*)cvalue_data(args[0]);
     return size_wrap(u8_charnum(str+start, stop-start));
 }
 
+#if defined(_OS_WINDOWS_)
+extern int wcwidth(uint32_t c);
+#elif defined(_OS_LINUX_)
 extern int wcwidth(wchar_t c);
+#endif
 
 value_t fl_string_width(value_t *args, u_int32_t nargs)
 {
@@ -71,7 +78,7 @@ value_t fl_string_reverse(value_t *args, u_int32_t nargs)
         type_error("string.reverse", "string", args[0]);
     size_t len = cv_len((cvalue_t*)ptr(args[0]));
     value_t ns = cvalue_string(len);
-    u8_reverse(cvalue_data(ns), cvalue_data(args[0]), len);
+    u8_reverse((char*)cvalue_data(ns), (char*)cvalue_data(args[0]), len);
     return ns;
 }
 
@@ -86,8 +93,8 @@ value_t fl_string_encode(value_t *args, u_int32_t nargs)
             uint32_t *ptr = (uint32_t*)cv_data(cv);
             size_t nbytes = u8_codingsize(ptr, nc);
             value_t str = cvalue_string(nbytes);
-            ptr = cv_data((cvalue_t*)ptr(args[0]));  // relocatable pointer
-            u8_toutf8(cvalue_data(str), nbytes, ptr, nc);
+            ptr = (uint32_t*)cv_data((cvalue_t*)ptr(args[0]));  // relocatable pointer
+            u8_toutf8((char*)cvalue_data(str), nbytes, ptr, nc);
             return str;
         }
     }
@@ -112,8 +119,8 @@ value_t fl_string_decode(value_t *args, u_int32_t nargs)
     size_t newsz = nc*sizeof(uint32_t);
     if (term) newsz += sizeof(uint32_t);
     value_t wcstr = cvalue(wcstringtype, newsz);
-    ptr = cv_data((cvalue_t*)ptr(args[0]));  // relocatable pointer
-    uint32_t *pwc = cvalue_data(wcstr);
+    ptr = (char*)cv_data((cvalue_t*)ptr(args[0]));  // relocatable pointer
+    uint32_t *pwc = (uint32_t*)cvalue_data(wcstr);
     u8_toucs(pwc, nc, ptr, nb);
     if (term) pwc[nc] = 0;
     return wcstr;
@@ -127,6 +134,7 @@ value_t fl_string(value_t *args, u_int32_t nargs)
     if (nargs == 1 && fl_isstring(args[0]))
         return args[0];
     value_t arg, buf = fl_buffer(NULL, 0);
+    fl_gc_handle(&buf);
     ios_t *s = value2c(ios_t*,buf);
     uint32_t i;
     value_t oldpr = symbol_value(printreadablysym);
@@ -138,7 +146,6 @@ value_t fl_string(value_t *args, u_int32_t nargs)
     }
     set(printreadablysym, oldpr);
     set(printprettysym, oldpp);
-    fl_gc_handle(&buf);
     value_t outp = stream_to_string(&buf);
     fl_free_gc_handles(1);
     return outp;
@@ -168,8 +175,8 @@ value_t fl_string_split(value_t *args, u_int32_t nargs)
         c = fl_cons(cvalue_string(ssz), FL_NIL);
 
         // we've done allocation; reload movable pointers
-        s = cv_data((cvalue_t*)ptr(args[0]));
-        delim = cv_data((cvalue_t*)ptr(args[1]));
+        s = (char*)cv_data((cvalue_t*)ptr(args[0]));
+        delim = (char*)cv_data((cvalue_t*)ptr(args[1]));
 
         if (ssz) memcpy(cv_data((cvalue_t*)ptr(car_(c))), &s[tokstart], ssz);
 
@@ -194,11 +201,11 @@ value_t fl_string_sub(value_t *args, u_int32_t nargs)
     char *s = tostring(args[0], "string.sub");
     size_t len = cv_len((cvalue_t*)ptr(args[0]));
     size_t i1, i2;
-    i1 = toulong(args[1], "string.sub");
+    i1 = tosize(args[1], "string.sub");
     if (i1 > len)
         bounds_error("string.sub", args[0], args[1]);
     if (nargs == 3) {
-        i2 = toulong(args[2], "string.sub");
+        i2 = tosize(args[2], "string.sub");
         if (i2 > len)
             bounds_error("string.sub", args[0], args[2]);
     }
@@ -208,6 +215,7 @@ value_t fl_string_sub(value_t *args, u_int32_t nargs)
     if (i2 <= i1)
         return cvalue_string(0);
     value_t ns = cvalue_string(i2-i1);
+    s = (char*)cvalue_data(args[0]); // reload after alloc
     memcpy(cv_data((cvalue_t*)ptr(ns)), &s[i1], i2-i1);
     return ns;
 }
@@ -217,7 +225,7 @@ value_t fl_string_char(value_t *args, u_int32_t nargs)
     argcount("string.char", nargs, 2);
     char *s = tostring(args[0], "string.char");
     size_t len = cv_len((cvalue_t*)ptr(args[0]));
-    size_t i = toulong(args[1], "string.char");
+    size_t i = tosize(args[1], "string.char");
     if (i >= len)
         bounds_error("string.char", args[0], args[1]);
     size_t sl = u8_seqlen(&s[i]);
@@ -245,7 +253,7 @@ value_t fl_char_downcase(value_t *args, u_int32_t nargs)
 
 static value_t mem_find_byte(char *s, char c, size_t start, size_t len)
 {
-    char *p = memchr(s+start, c, len-start);
+    char *p = (char*)memchr(s+start, c, len-start);
     if (p == NULL)
         return FL_F;
     return size_wrap((size_t)(p - s));
@@ -256,7 +264,7 @@ value_t fl_string_find(value_t *args, u_int32_t nargs)
     char cbuf[8];
     size_t start = 0;
     if (nargs == 3)
-        start = toulong(args[2], "string.find");
+        start = tosize(args[2], "string.find");
     else
         argcount("string.find", nargs, 2);
     char *s = tostring(args[0], "string.find");
@@ -307,10 +315,10 @@ value_t fl_string_inc(value_t *args, u_int32_t nargs)
         argcount("string.inc", nargs, 2);
     char *s = tostring(args[0], "string.inc");
     size_t len = cv_len((cvalue_t*)ptr(args[0]));
-    size_t i = toulong(args[1], "string.inc");
+    size_t i = tosize(args[1], "string.inc");
     size_t cnt = 1;
     if (nargs == 3)
-        cnt = toulong(args[2], "string.inc");
+        cnt = tosize(args[2], "string.inc");
     while (cnt--) {
         if (i >= len)
             bounds_error("string.inc", args[0], args[1]);
@@ -325,10 +333,10 @@ value_t fl_string_dec(value_t *args, u_int32_t nargs)
         argcount("string.dec", nargs, 2);
     char *s = tostring(args[0], "string.dec");
     size_t len = cv_len((cvalue_t*)ptr(args[0]));
-    size_t i = toulong(args[1], "string.dec");
+    size_t i = tosize(args[1], "string.dec");
     size_t cnt = 1;
     if (nargs == 3)
-        cnt = toulong(args[2], "string.dec");
+        cnt = tosize(args[2], "string.dec");
     // note: i is allowed to start at index len
     if (i > len)
         bounds_error("string.dec", args[0], args[1]);
@@ -342,7 +350,7 @@ value_t fl_string_dec(value_t *args, u_int32_t nargs)
 
 static unsigned long get_radix_arg(value_t arg, char *fname)
 {
-    unsigned long radix = toulong(arg, fname);
+    unsigned long radix = (unsigned long)tosize(arg, fname);
     if (radix < 2 || radix > 36)
         lerrorf(ArgError, "%s: invalid radix", fname);
     return radix;

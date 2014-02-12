@@ -218,7 +218,7 @@ function trailing_update_par(L_II, A_IJ, A_KI, A_KJ, row_dep, col_dep)
     if !isempty(A_KJ)
         m, k = size(A_KI)
         n = size(A_IJ,2)
-        _jl_blas_gemm('N','N',m,n,k,-1.0,A_KI,m,A_IJ,k,1.0,A_KJ,m)
+        blas_gemm('N','N',m,n,k,-1.0,A_KI,m,A_IJ,k,1.0,A_KJ,m)
         #A_KJ = A_KJ - A_KI*A_IJ
     end
     
@@ -249,15 +249,15 @@ function hpl_par2(A::Matrix, b::Vector)
     for i = 1:nB
         #println("C=$(convert(Array, C))") #####
         ##panel factorization
-        panel_p = remote_call_fetch(C.pmap[i], panel_factor_par2, C, i, n)
+        panel_p = remotecall_fetch(C.pmap[i], panel_factor_par2, C, i, n)
 
         ## Apply permutation from pivoting
         for j = (i+1):nB
-           depend[i,j] = remote_call(C.pmap[j], permute, C, i, j, panel_p, n, false)
+           depend[i,j] = remotecall(C.pmap[j], permute, C, i, j, panel_p, n, false)
         end
         ## Special case for last column
         if i == nB
-           depend[nB,nB] = remote_call(C.pmap[nB], permute, C, i, nB+1, panel_p, n, true)
+           depend[nB,nB] = remotecall(C.pmap[nB], permute, C, i, nB+1, panel_p, n, true)
         end
 
         ##Trailing updates
@@ -274,13 +274,13 @@ function hpl_par2(A::Matrix, b::Vector)
 
         for j=(i+1):nB
             dep = depend[i,j]
-            depend[j,i] = remote_call(C.pmap[j], trailing_update_par2, C, L_II, C_KI, i, j, n, false, dep)
+            depend[j,i] = remotecall(C.pmap[j], trailing_update_par2, C, L_II, C_KI, i, j, n, false, dep)
         end
 
         ## Special case for last column
         if i == nB
             dep = depend[nB,nB]
-            remote_call_fetch(C.pmap[nB], trailing_update_par2, C, L_II, C_KI, i, nB+1, n, true, dep)
+            remotecall_fetch(C.pmap[nB], trailing_update_par2, C, L_II, C_KI, i, nB+1, n, true, dep)
         else
             #enforce dependencies for nonspecial case
             for j=(i+1):nB
@@ -361,7 +361,7 @@ function trailing_update_par2(C, L_II, C_KI, i, j, n, flag, dep)
         if !isempty(C_KJ)
             cm, ck = size(C_KI)
             cn = size(C_IJ,2)
-            _jl_blas_gemm('N','N',cm,cn,ck,-1.0,C_KI,cm,C_IJ,ck,1.0,C_KJ,cm)
+            blas_gemm('N','N',cm,cn,ck,-1.0,C_KI,cm,C_IJ,ck,1.0,C_KJ,cm)
             #C_KJ = C_KJ - C_KI*C_IJ
             C[K,J] = C_KJ
         end   
