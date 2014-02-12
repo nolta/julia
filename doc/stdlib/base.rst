@@ -1,5 +1,9 @@
 .. currentmodule:: Base
 
+******
+ Base
+******
+
 Introduction
 ------------
 
