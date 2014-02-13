@@ -46,11 +46,13 @@ h1,h2,h3,h4,h5,h6 {
 }
 
 .rst-content dl:not(.docutils) {
-    border-top: solid 3px #6ab0de;
+    border-top: solid 1px #f0f0f0;
 }
 
 .rst-content dl:not(.docutils) dt {
+    background: #fcfcfc;
     border-top: none;
+    color: rgb(35,87,121);
     display: block;
     margin: 1px 0;
 }
