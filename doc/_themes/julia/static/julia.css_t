@@ -1,13 +1,21 @@
 @import url("css/theme.css");
 
+.wy-menu-vertical li.current > a,
+.wy-nav-content,
+.wy-nav-content-wrap {
+    background: #fff;
+}
+
+.wy-menu-vertical li.current a {
+    border-right: none;
+}
+
 body,
 .wy-body-for-nav,
-.wy-menu-vertical li.current > a,
-.wy-nav-content-wrap,
 .wy-nav-side,
 .wy-side-nav-search,
 .wy-side-nav-search img {
-    background: #fff;
+    background: #fcfcfc;
 }
 
 .wy-side-nav-search img {
@@ -16,6 +24,10 @@ body,
     border-radius: 0;
     margin: 1em;
     padding: 0;
+}
+
+.wy-side-nav-search input[type="text"] {
+    border-color: rgb(201, 201, 201);
 }
 
 div.section {
