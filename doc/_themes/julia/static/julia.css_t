@@ -1,5 +1,31 @@
 @import url("css/theme.css");
 
+body,
+.wy-body-for-nav,
+.wy-menu-vertical li.current > a,
+.wy-nav-content-wrap,
+.wy-nav-side,
+.wy-side-nav-search,
+.wy-side-nav-search img {
+    background: #fff;
+}
+
+.wy-side-nav-search img {
+    width: 158px;
+    height: 106px;
+    border-radius: 0;
+    margin: 1em;
+    padding: 0;
+}
+
+div.section {
+    font-family: georgia, serif;
+}
+
+h1,h2,h3,h4,h5,h6 {
+    font-family: helvetica, arial, 'freesans clean', sans-serif;
+}
+
 .rst-content dl:not(.docutils) {
     border-top: solid 3px #6ab0de;
 }
@@ -9,4 +35,3 @@
     display: block;
     margin: 1px 0;
 }
-
