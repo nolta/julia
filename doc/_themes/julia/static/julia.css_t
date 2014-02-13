@@ -1,13 +1,8 @@
 @import url("css/theme.css");
 
-.wy-menu-vertical li.current > a,
 .wy-nav-content,
 .wy-nav-content-wrap {
     background: #fff;
-}
-
-.wy-menu-vertical li.current a {
-    border-right: none;
 }
 
 body,
@@ -16,6 +11,18 @@ body,
 .wy-side-nav-search,
 .wy-side-nav-search img {
     background: #fcfcfc;
+}
+
+.wy-menu-vertical li.current a,
+.wy-side-nav-search,
+.wy-nav-side {
+    border-right: none;
+    box-shadow: inset -14px 0px 5px -12px rgb(210,210,210);
+}
+
+.wy-menu-vertical li.current > a {
+    background: #fff;
+    box-shadow: none;
 }
 
 .wy-side-nav-search img {
