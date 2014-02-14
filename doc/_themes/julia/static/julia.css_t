@@ -21,7 +21,8 @@ body,
     box-shadow: inset -14px 0px 5px -12px rgb(210,210,210);
 }
 
-.wy-menu-vertical li.current > a {
+.wy-menu-vertical li.current > a,
+.wy-menu-vertical li.current > a:hover {
     background: #fff;
     box-shadow: none;
 }
