@@ -2,6 +2,7 @@
 
 .wy-nav-content,
 .wy-nav-content-wrap {
+    color: #222;
     background: #fff;
 }
 
