@@ -1,8 +1,8 @@
 .. currentmodule:: Base
 
-******
- Base
-******
+**********************
+ The Standard Library
+**********************
 
 Introduction
 ------------
